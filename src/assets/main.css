@@ -1,0 +1,48 @@
+/* Ghi đè màu xanh của Bootstrap thành màu cam trái cây */
+.btn-fruit {
+    background-color: #ff6b01 !important; /* Màu cam */
+    border-color: #ff6b01 !important;
+    border-radius: 20px; /* Bo tròn mềm mại */
+    font-weight: bold;
+    transition: transform 0.2s; /* Hiệu ứng mượt */
+}
+
+/* Thêm hiệu ứng khi di chuột */
+.btn-fruit:hover {
+    background-color: #e65100 !important;
+    transform: scale(1.05); /* Phóng to nhẹ khi trỏ chuột */
+}   
+
+/* src/assets/main.css */
+html {
+    overflow-y: scroll; /* Luôn hiện thanh cuộn dọc */
+}
+
+.product-img {
+    height: 200px; /* Chiều cao cố định */
+    width: 100%;   /* Chiều rộng full khung */
+    object-fit: contain; /* Ảnh không bị méo */
+    display: block; /* Tránh khoảng trắng thừa của thẻ img */
+}
+
+
+
+
+
+/* app.vue */
+/* 2. Hiệu ứng chuyển trang mờ dần (Fade) - Giúp web trông mượt hơn */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* 3. CSS reset cơ bản cho Admin (nếu cần) */
+.admin-wrapper {
+  min-height: 100vh;
+  background-color: #f4f6f9; /* Màu nền hơi xám cho admin đỡ mỏi mắt */
+}

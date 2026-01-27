@@ -15,4 +15,24 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  // Optimization cho build production
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor': ['vue', 'vue-router', 'pinia', 'axios', 'bootstrap', 'sweetalert2', 'chart.js']
+        }
+      }
+    },
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true
+      }
+    }
+  },
+  // Optimization cho dependencies
+  optimizeDeps: {
+    include: ['vue', 'vue-router', 'pinia', 'axios', 'bootstrap', 'sweetalert2', 'chart.js']
+  }
 })
