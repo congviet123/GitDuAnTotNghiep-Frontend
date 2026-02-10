@@ -2,8 +2,8 @@
 import '/src/assets/main.css'
 
 // 2. Import các thư viện cốt lõi của Vue
-import { createApp } from 'vue'
-import { createPinia } from 'pinia' 
+import { createApp } from 'vue' 
+import { createPinia } from 'pinia'
 
 // 3. Import Component gốc và Router
 import App from './App.vue'

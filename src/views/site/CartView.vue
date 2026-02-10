@@ -1,34 +1,43 @@
 <script setup>
 import { ref, onMounted, computed, reactive, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import apiClient from '@/services/api';
-import { useAuthStore } from '@/store/auth';
+import apiClient from '@/services/api'; // Đảm bảo đường dẫn đúng
 import Swal from 'sweetalert2';
 import * as bootstrap from 'bootstrap';
 
 const router = useRouter();
-const authStore = useAuthStore();
 
 // --- STATE ---
 const cartItems = ref([]);
 const selectedProductIds = ref([]);
 const addressError = ref(null);
-const userProfile = ref(null);
-const addressType = ref('new');
+
+// Quản lý địa chỉ
+const savedAddresses = ref([]); // Danh sách địa chỉ từ API
+const addressType = ref('new'); // 'saved' hoặc 'new'
+const selectedAddressId = ref(null); // ID địa chỉ được chọn
+
+// Modal instances
+let checkoutModalInstance = null;
+let qrModalInstance = null;
 
 // Biến phục vụ thanh toán Online
 const createdOrder = ref(null); 
 let pollingInterval = null;     
 
-//  Thay vì hardcode, ta dùng ref rỗng để hứng dữ liệu từ Backend
 const shopBank = ref({
     bankId: '',
     accountNo: '',
     accountName: ''
 });
 
+// Dữ liệu đơn hàng gửi đi
 const orderData = reactive({
-    recipientName: '', recipientPhone: '', shippingAddress: '', notes: '', paymentMethod: 'COD'
+    recipientName: '', 
+    recipientPhone: '', 
+    shippingAddress: '', // Nếu nhập mới thì dùng cái này
+    notes: '', 
+    paymentMethod: 'COD'
 });
 
 // --- COMPUTED ---
@@ -40,17 +49,16 @@ const totalSelectedAmount = computed(() => {
     return selectedItems.value.reduce((sum, item) => sum + parseFloat(item.price) * item.quantity, 0);
 });
 
-//Tạo QR Code dựa trên dữ liệu lấy từ API
+// QR Code
 const qrCodeUrlCreated = computed(() => {
-    // Chỉ tạo QR khi đã có đơn hàng và đã tải xong thông tin ngân hàng
     if (!createdOrder.value || !shopBank.value.bankId) return '';
-    
     const amount = Math.round(createdOrder.value.totalAmount);
     const content = `DH${createdOrder.value.id}`;
-    
-    // Sử dụng thông tin từ shopBank.value (dữ liệu động)
     return `https://img.vietqr.io/image/${shopBank.value.bankId}-${shopBank.value.accountNo}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}`;
 });
+
+// Kiểm tra login (đơn giản hóa bằng localStorage)
+const isAuthenticated = computed(() => !!localStorage.getItem('token'));
 
 // --- HELPER ---
 const getImageUrl = (imageName) => {
@@ -65,25 +73,27 @@ const formatPrice = (value) => {
 
 // --- METHODS (CART) ---
 const fetchCartItems = async () => {
+    if (!isAuthenticated.value) return;
     try {
         const response = await apiClient.get('/cart');
         cartItems.value = response.data;
+        // Mặc định chọn hết nếu chưa chọn gì
         if(cartItems.value.length > 0 && selectedProductIds.value.length === 0) {
             selectedProductIds.value = cartItems.value.map(item => item.productId);
         }
     } catch (error) { console.error('Lỗi tải giỏ hàng:', error); }
 };
 
-
-// Hàm gọi API Backend để lấy thông tin ngân hàng (Bảo mật source code)
 const fetchBankInfo = async () => {
     try {
-        // Gọi API Backend: /rest/sepay/bank-info
+        // Mock data nếu chưa có API backend thật
+        // shopBank.value = { bankId: 'MB', accountNo: '0901234567', accountName: 'NGUYEN VAN A' };
+        
+        // Nếu đã có API thật thì dùng dòng này:
         const response = await apiClient.get('/sepay/bank-info');
         shopBank.value = response.data;
     } catch (error) {
-        console.error('Lỗi kết nối đến hệ thống thanh toán. Vui lòng thử lại sau:', error);
-        shopBank.value = { bankId: '', accountNo: '', accountName: '' };
+        console.error('Lỗi bank info:', error);
     }
 };
 
@@ -94,9 +104,7 @@ const updateQuantityAPI = async (productId, newQuantity) => {
         const response = await apiClient.put(`/cart/${productId}?quantity=${newQuantity}`);
         cartItems.value = response.data;
     } catch (error) {
-        let errorMsg = 'Không thể cập nhật số lượng.';
-        if (error.response && error.response.data) errorMsg = error.response.data.message || error.response.data;
-        Swal.fire({ icon: 'warning', title: 'Thông báo', text: typeof errorMsg === 'string' ? errorMsg : 'Lỗi hệ thống' });
+        Swal.fire('Lỗi', 'Không thể cập nhật số lượng', 'error');
         fetchCartItems();
     }
 };
@@ -117,96 +125,118 @@ const removeItem = async (productId) => {
 };
 
 // --- METHODS (CHECKOUT) ---
-const fetchUserProfile = async () => {
-    try {
-        const res = await apiClient.get('/client/profile');
-        userProfile.value = res.data;
-        if (userProfile.value.address) { addressType.value = 'saved'; fillOrderInfoFromProfile(); } 
-        else { addressType.value = 'new'; if (userProfile.value.fullname) orderData.recipientName = userProfile.value.fullname; if (userProfile.value.phone) orderData.recipientPhone = userProfile.value.phone; }
-    } catch (err) { addressType.value = 'new'; }
-};
 
-const fillOrderInfoFromProfile = () => {
-    if (userProfile.value) {
-        orderData.recipientName = userProfile.value.fullname;
-        orderData.recipientPhone = userProfile.value.phone;
-        orderData.shippingAddress = userProfile.value.address;
+// [MỚI] Lấy danh sách địa chỉ từ bảng Address
+const fetchSavedAddresses = async () => {
+    try {
+        const res = await apiClient.get('/api/addresses'); // Gọi API Address mới
+        savedAddresses.value = res.data;
+        
+        if (savedAddresses.value.length > 0) {
+            addressType.value = 'saved';
+            // Tìm địa chỉ mặc định
+            const defaultAddr = savedAddresses.value.find(a => a.isDefault);
+            if (defaultAddr) {
+                selectedAddressId.value = defaultAddr.id;
+            } else {
+                selectedAddressId.value = savedAddresses.value[0].id;
+            }
+        } else {
+            addressType.value = 'new';
+        }
+    } catch (err) {
+        console.error(err);
+        addressType.value = 'new';
     }
 };
 
-watch(addressType, (newVal) => {
-    if (newVal === 'saved') fillOrderInfoFromProfile();
-    else orderData.shippingAddress = ''; 
-});
-
 const checkout = async () => {
     if (selectedItems.value.length === 0) return Swal.fire('Thông báo', 'Vui lòng chọn sản phẩm.', 'info');
-    if (authStore.isAuthenticated) await fetchUserProfile();
-    new bootstrap.Modal(document.getElementById('checkoutModal')).show();
+    
+    if (isAuthenticated.value) {
+        await fetchSavedAddresses();
+    }
+    
+    if (checkoutModalInstance) checkoutModalInstance.show();
 };
 
 const submitOrder = async () => {
     addressError.value = null;
-    if (!orderData.shippingAddress.trim()) { addressError.value = "Vui lòng nhập địa chỉ."; return; }
-    if (!orderData.recipientName || !orderData.recipientPhone) { addressError.value = "Thiếu thông tin người nhận."; return; }
+    
+    let finalRecipientName = '';
+    let finalRecipientPhone = '';
+    let finalShippingAddress = '';
 
-    const fullShippingInfo = `${orderData.shippingAddress} (Người nhận: ${orderData.recipientName}, SĐT: ${orderData.recipientPhone})`;
+    // Logic lấy địa chỉ
+    if (addressType.value === 'saved') {
+        if (!selectedAddressId.value) {
+            addressError.value = "Vui lòng chọn một địa chỉ.";
+            return;
+        }
+        const addr = savedAddresses.value.find(a => a.id === selectedAddressId.value);
+        if (addr) {
+            finalRecipientName = addr.fullname;
+            finalRecipientPhone = addr.phone;
+            // Ghép chuỗi địa chỉ đầy đủ
+            finalShippingAddress = `${addr.addressLine}, ${addr.ward}, ${addr.district}, ${addr.province}`;
+        }
+    } else {
+        // Nhập mới
+        if (!orderData.shippingAddress.trim()) { addressError.value = "Vui lòng nhập địa chỉ."; return; }
+        if (!orderData.recipientName || !orderData.recipientPhone) { addressError.value = "Thiếu thông tin người nhận."; return; }
+        
+        finalRecipientName = orderData.recipientName;
+        finalRecipientPhone = orderData.recipientPhone;
+        finalShippingAddress = orderData.shippingAddress;
+    }
 
+    // Tạo payload đúng chuẩn OrderCreateDTO
     const orderDTO = {
-        shippingAddress: fullShippingInfo,
+        recipientName: finalRecipientName,
+        recipientPhone: finalRecipientPhone,
+        shippingAddress: finalShippingAddress,
         notes: orderData.notes,
-        items: selectedItems.value,
-        paymentMethod: orderData.paymentMethod
+        paymentMethod: orderData.paymentMethod,
+        voucherCode: null, // Chưa xử lý voucher
+        items: selectedItems.value.map(item => ({
+            productId: item.productId,
+            quantity: item.quantity
+        }))
     };
 
     try {
         const res = await apiClient.post('/orders', orderDTO);
         
         // 1. Tắt modal nhập thông tin
-        const checkoutModal = bootstrap.Modal.getInstance(document.getElementById('checkoutModal'));
-        if (checkoutModal) checkoutModal.hide();
+        if (checkoutModalInstance) checkoutModalInstance.hide();
 
         // 2. Kiểm tra phương thức thanh toán
         if (orderData.paymentMethod === 'BANK') {
             createdOrder.value = res.data; 
-            
-            // Mở Modal QR
-            const qrModal = new bootstrap.Modal(document.getElementById('paymentQrModal'));
-            qrModal.show();
-            
-            // Bắt đầu tự động kiểm tra trạng thái
+            if (qrModalInstance) qrModalInstance.show();
             startPollingOrder(createdOrder.value.id);
-            
         } else {
-            // [LOGIC COD]
             await Swal.fire({ title: 'Thành công!', text: 'Đơn hàng đã được tạo.', icon: 'success' });
             router.push('/order-history');
         }
     } catch (error) {
+        console.error(error);
         let errorMsg = 'Có lỗi xảy ra.';
         if(error.response && error.response.data) errorMsg = error.response.data.message || error.response.data;
         Swal.fire('Lỗi đặt hàng', typeof errorMsg === 'string' ? errorMsg : 'Lỗi hệ thống', 'error');
-        fetchCartItems();
     }
 };
 
-// [HÀM POLLING] Kiểm tra trạng thái đơn hàng mỗi 2.5 giây
+// Polling
 const startPollingOrder = (orderId) => {
     if (pollingInterval) clearInterval(pollingInterval);
-
     pollingInterval = setInterval(async () => {
         try {
             const res = await apiClient.get(`/orders/${orderId}`);
             const status = res.data.status;
-            
-            // Nếu trạng thái đã đổi thành công (do Webhook cập nhật)
-            if (status === 'CONFIRMED' || status === 'PAID') {
+            if (status === 'CONFIRMED' || status === 'PAID') { // Điều chỉnh status theo Backend của bạn
                 clearInterval(pollingInterval); 
-
-                const qrModalElement = document.getElementById('paymentQrModal');
-                const qrModal = bootstrap.Modal.getInstance(qrModalElement);
-                if (qrModal) qrModal.hide();
-
+                if (qrModalInstance) qrModalInstance.hide();
                 await Swal.fire({
                     title: 'Thanh toán thành công!',
                     text: 'Hệ thống đã xác nhận tiền về tài khoản.',
@@ -216,9 +246,7 @@ const startPollingOrder = (orderId) => {
                 });
                 router.push('/order-history');
             }
-        } catch (error) {
-            console.error("Lỗi polling:", error);
-        }
+        } catch (error) { console.error("Lỗi polling:", error); }
     }, 2500);
 };
 
@@ -228,7 +256,14 @@ onBeforeUnmount(() => {
 
 onMounted(() => {
     fetchCartItems();
-    fetchBankInfo();  // Gọi hàm lấy thông tin ngân hàng khi tải trang
+    fetchBankInfo();
+    
+    // Khởi tạo Bootstrap Modals
+    const checkoutEl = document.getElementById('checkoutModal');
+    if (checkoutEl) checkoutModalInstance = new bootstrap.Modal(checkoutEl);
+    
+    const qrEl = document.getElementById('paymentQrModal');
+    if (qrEl) qrModalInstance = new bootstrap.Modal(qrEl);
 });
 </script>
 
@@ -283,7 +318,7 @@ onMounted(() => {
                                 <span class="fw-semibold">Tổng thanh toán ({{ selectedItems.length }} sp):</span>
                                 <span class="text-danger fs-4 fw-bold">{{ formatPrice(totalSelectedAmount) }}</span>
                             </div>
-                            <div v-if="authStore.isAuthenticated">
+                            <div v-if="isAuthenticated">
                                 <button @click="checkout" class="btn btn-success w-100 py-2 fw-bold text-uppercase shadow-sm" :disabled="selectedItems.length === 0">Tiến hành đặt hàng</button>
                             </div>
                             <div v-else class="alert alert-warning mb-0 text-center py-2">
@@ -312,28 +347,44 @@ onMounted(() => {
                         <div class="modal-body p-4">
                             <div class="row">
                                 <div class="col-md-7 border-end">
-                                    <div class="mb-3">
-                                        <label class="form-label fw-bold">Thông tin người nhận <span class="text-danger">*</span></label>
-                                        <div class="mb-3 d-flex gap-3 bg-light p-2 rounded" v-if="userProfile && userProfile.address">
+                                    <div class="mb-4">
+                                        <label class="form-label fw-bold">1. Thông tin người nhận & Địa chỉ</label>
+                                        
+                                        <div class="d-flex gap-3 mb-3" v-if="savedAddresses.length > 0">
                                             <div class="form-check">
                                                 <input class="form-check-input" type="radio" v-model="addressType" value="saved" id="addrSaved">
-                                                <label class="form-check-label cursor-pointer" for="addrSaved">Dùng địa chỉ đã lưu</label>
+                                                <label class="form-check-label cursor-pointer" for="addrSaved">Sổ địa chỉ ({{ savedAddresses.length }})</label>
                                             </div>
                                             <div class="form-check">
                                                 <input class="form-check-input" type="radio" v-model="addressType" value="new" id="addrNew">
                                                 <label class="form-check-label cursor-pointer" for="addrNew">Nhập địa chỉ mới</label>
                                             </div>
                                         </div>
-                                        <div class="row g-2 mb-2">
-                                            <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientName" placeholder="Họ và tên" required :disabled="addressType === 'saved'"></div>
-                                            <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientPhone" placeholder="Số điện thoại" required :disabled="addressType === 'saved'"></div>
+
+                                        <div v-if="addressType === 'saved' && savedAddresses.length > 0" class="list-group">
+                                            <label v-for="addr in savedAddresses" :key="addr.id" class="list-group-item list-group-item-action d-flex align-items-center cursor-pointer">
+                                                <input class="form-check-input me-3" type="radio" :value="addr.id" v-model="selectedAddressId">
+                                                <div>
+                                                    <div class="fw-bold">{{ addr.fullname }} - {{ addr.phone }} <span v-if="addr.isDefault" class="badge bg-primary ms-1">Mặc định</span></div>
+                                                    <div class="small text-secondary">{{ addr.addressLine }}, {{ addr.ward }}, {{ addr.district }}, {{ addr.province }}</div>
+                                                </div>
+                                            </label>
+                                            <router-link to="/profile" class="btn btn-outline-primary btn-sm mt-2 w-100"><i class="bi bi-gear"></i> Quản lý sổ địa chỉ</router-link>
                                         </div>
-                                        <textarea v-model="orderData.shippingAddress" class="form-control" rows="3" placeholder="Số nhà, đường, phường/xã, quận/huyện..." required :disabled="addressType === 'saved'"></textarea>
-                                        <div v-if="addressError" class="text-danger small mt-1"><i class="bi bi-exclamation-circle"></i> {{ addressError }}</div>
+
+                                        <div v-else>
+                                            <div class="row g-2 mb-2">
+                                                <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientName" placeholder="Họ và tên người nhận" required></div>
+                                                <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientPhone" placeholder="Số điện thoại" required></div>
+                                            </div>
+                                            <textarea v-model="orderData.shippingAddress" class="form-control" rows="3" placeholder="Số nhà, tên đường, phường/xã, quận/huyện, tỉnh/thành..." required></textarea>
+                                        </div>
+                                        
+                                        <div v-if="addressError" class="text-danger small mt-2"><i class="bi bi-exclamation-circle"></i> {{ addressError }}</div>
                                     </div>
 
                                     <div class="mb-3">
-                                        <label class="form-label fw-bold">Phương thức thanh toán</label>
+                                        <label class="form-label fw-bold">2. Phương thức thanh toán</label>
                                         <div class="d-flex gap-2">
                                             <div class="form-check border rounded p-2 px-4 flex-fill cursor-pointer" :class="{'border-success bg-success-subtle': orderData.paymentMethod === 'COD'}">
                                                 <input class="form-check-input" type="radio" v-model="orderData.paymentMethod" value="COD" id="payCOD">
@@ -346,7 +397,7 @@ onMounted(() => {
                                         </div>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label fw-bold">Ghi chú</label>
+                                        <label class="form-label fw-bold">Ghi chú (Tùy chọn)</label>
                                         <textarea v-model="orderData.notes" class="form-control" rows="2" placeholder="Ví dụ: Giao hàng giờ hành chính..."></textarea>
                                     </div>
                                 </div>

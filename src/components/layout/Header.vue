@@ -20,16 +20,23 @@ const categories = ref([]);
 // --- LOGIC ---
 const fetchCategories = async () => {
     try {
+        // api.js đã có baseURL là '/rest'
+        // Nên ở đây chỉ gọi '/client/categories'
+        // Kết quả thực tế: http://localhost:8080/rest/client/categories
         const res = await apiClient.get('/client/categories');
         categories.value = res.data;
     } catch (err) {
         console.error("Lỗi tải danh mục header:", err);
+        // Lưu ý: Nếu lỗi 401 xảy ra ở đây, api.js sẽ tự động logout.
+        // Điều này là bảo mật đúng: Token sai thì phải bắt đăng nhập lại.
     }
 };
 
+// Toggle Dropdowns
 const toggleUserDropdown = () => isUserDropdownOpen.value = !isUserDropdownOpen.value;
 const toggleCategoryDropdown = () => isCategoryOpen.value = !isCategoryOpen.value; 
 
+// Click outside to close
 const closeDropdowns = (event) => {
     if (userDropdownRef.value && !userDropdownRef.value.contains(event.target)) {
         isUserDropdownOpen.value = false;
@@ -56,19 +63,24 @@ const handleLogout = () => {
     router.push('/login');
 };
 
+// Logic check quyền Admin an toàn (tránh lỗi null)
 const isAdmin = computed(() => {
-    if (!authStore.user) return false;
-    const role = authStore.user.role || authStore.user.roleName;
-    if (typeof role === 'object' && role !== null && role.name) return role.name === 'ROLE_ADMIN' || role.name === 'ADMIN';
-    if (typeof role === 'string') return role === 'ROLE_ADMIN' || role === 'ADMIN';
-    if (Array.isArray(role)) return role.includes('ROLE_ADMIN') || role.includes('ADMIN');
-    return false;
+    const user = authStore.user;
+    if (!user || !user.role) return false;
+    
+    // Hỗ trợ cả trường hợp role là Object hoặc String (tùy Backend trả về)
+    const roleName = user.role.name || user.role;
+    return roleName === 'ROLE_ADMIN' || roleName === 'ADMIN' || roleName === 'ROLE_STAFF';
 });
 
 onMounted(() => { 
     document.addEventListener('click', closeDropdowns); 
-    fetchCategories(); 
+    fetchCategories();
+    
+    // Nếu có giỏ hàng, tải lại giỏ hàng (nếu backend cần sync)
+    // if (authStore.isAuthenticated) cartStore.fetchCart(); 
 });
+
 onUnmounted(() => { 
     document.removeEventListener('click', closeDropdowns); 
 });
@@ -86,15 +98,18 @@ onUnmounted(() => {
                                 src="/imgs/logoTraiCayBay.jpg" 
                                 alt="Logo Trái Cây Bay" 
                                 class="header-logo"
+                                @error="$event.target.src = 'https://via.placeholder.com/150x50?text=TraiCayBay'"
                             >
                         </router-link>
                     </div>
 
                     <div class="col-md-5">
-                        <div class="input-group">
-                            <input type="text" class="form-control border-primary-blue rounded-start-pill ps-4" 
-                                   placeholder="Tìm kiếm trái cây..." v-model="keyword" @keyup.enter="handleSearch">
-                            <button class="btn btn-primary-blue text-white rounded-end-pill px-4 fw-bold" @click="handleSearch">
+                        <div class="input-group shadow-sm rounded-pill overflow-hidden">
+                            <input type="text" class="form-control border-0 px-4 bg-light" 
+                                   placeholder="Tìm kiếm trái cây..." 
+                                   v-model="keyword" 
+                                   @keyup.enter="handleSearch">
+                            <button class="btn btn-primary-blue text-white px-4 fw-bold" @click="handleSearch">
                                 <i class="bi bi-search"></i>
                             </button>
                         </div>
@@ -128,19 +143,22 @@ onUnmounted(() => {
                                         <i class="bi bi-person-fill fs-4 text-primary-blue"></i>
                                     </div>
                                     <div class="d-flex flex-column">
-                                        <span class="small text-muted">Xin chào,</span>
-                                        <span class="fw-bold text-dark small">{{ authStore.user?.fullname || authStore.user?.username }}</span>
+                                        <span class="small text-muted" style="font-size: 0.75rem;">Xin chào,</span>
+                                        <span class="fw-bold text-dark small text-truncate" style="max-width: 120px;">
+                                            {{ authStore.user?.fullname || authStore.user?.username || 'Bạn' }}
+                                        </span>
                                     </div>
                                     <i class="bi bi-chevron-down ms-2 small text-muted"></i>
                                 </div>
 
-                                <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-2 show-animation" :class="{ show: isUserDropdownOpen }">
+                                <ul class="dropdown-menu dropdown-menu-end shadow border-0 mt-3 show-animation" :class="{ show: isUserDropdownOpen }">
                                     <li v-if="isAdmin">
-                                        <router-link class="dropdown-item text-danger fw-bold" to="/admin/dashboard" @click="isUserDropdownOpen = false">
+                                        <router-link class="dropdown-item text-danger fw-bold bg-light mb-1" to="/admin/dashboard" @click="isUserDropdownOpen = false">
                                             <i class="bi bi-speedometer2 me-2"></i>Quản trị Admin
                                         </router-link>
                                     </li>
                                     <li v-if="isAdmin"><hr class="dropdown-divider"></li>
+                                    
                                     <li><router-link class="dropdown-item" to="/profile" @click="isUserDropdownOpen = false"><i class="bi bi-person-badge me-2"></i>Hồ sơ cá nhân</router-link></li>
                                     <li><router-link class="dropdown-item" to="/order-history" @click="isUserDropdownOpen = false"><i class="bi bi-bag-check me-2"></i>Đơn mua</router-link></li>
                                     <li><router-link class="dropdown-item" to="/auth/change-password" @click="isUserDropdownOpen = false"><i class="bi bi-key me-2"></i>Đổi mật khẩu</router-link></li>
@@ -153,7 +171,8 @@ onUnmounted(() => {
                 </div>
             </div>
         </div> 
-        <div class="bg-primary-blue text-white shadow-sm">
+        
+        <div class="bg-primary-blue text-white shadow-sm sticky-top-custom">
             <div class="container">
                 <div class="row position-relative"> 
                     <div class="col-md-3 position-relative" ref="categoryRef">
@@ -166,7 +185,7 @@ onUnmounted(() => {
 
                         <div class="category-menu shadow" v-show="isCategoryOpen">
                             <ul class="list-group list-group-flush">
-                                <li class="list-group-item list-group-item-action cursor-pointer"
+                                <li class="list-group-item list-group-item-action cursor-pointer fw-bold"
                                     @click="router.push('/products'); isCategoryOpen = false">
                                     <i class="bi bi-grid me-2 text-primary-blue"></i> Tất cả sản phẩm
                                 </li>
@@ -199,16 +218,14 @@ onUnmounted(() => {
 
 <style scoped>
 .header-top {
-    /* Đổi mã màu #ffffff thành mã màu nền của logo nếu logo không phải trắng tinh */
     background-color: #ffffff; 
 }
 
 /* LOGO */
 .header-logo {
-    height: 90px; 
+    height: 70px; /* Điều chỉnh chiều cao cho vừa mắt */
     width: auto;
     object-fit: contain; 
-    border-radius: 12px;
     transition: transform 0.3s ease;
 }
 
@@ -220,20 +237,20 @@ onUnmounted(() => {
 .text-primary-blue { color: #007bff !important; }
 .bg-primary-blue { background-color: #007bff !important; }
 .bg-dark-blue { background-color: #0056b3 !important; }
-.border-primary-blue { border-color: #007bff !important; }
 .btn-primary-blue { background-color: #007bff; border-color: #007bff; transition: all 0.3s; }
 .btn-primary-blue:hover { background-color: #0056b3; border-color: #0056b3; }
 
 /* --- HIỆU ỨNG --- */
-.hover-effect:hover { color: #ffc107 !important; background-color: rgba(255, 255, 255, 0.1); }
+.hover-effect:hover { color: #ffc107 !important; background-color: rgba(255, 255, 255, 0.1); border-radius: 4px; }
 .hover-scale:hover { transform: scale(1.05); transition: transform 0.2s; }
 .cursor-pointer { cursor: pointer; }
-.vr { border-left: 1px solid #ccc; height: 40px; }
+.vr { border-left: 1px solid #dee2e6; height: 35px; }
 
 /* --- DROPDOWN --- */
-.dropdown-menu { display: none; margin-top: 10px; }
+.dropdown-menu { display: none; margin-top: 10px; border-radius: 8px; }
 .dropdown-menu.show { display: block; animation: fadeIn 0.2s ease-in-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+.dropdown-item { padding: 8px 16px; }
 .dropdown-item:hover { background-color: #f8f9fa; color: #007bff; }
 .dropdown-item:active { background-color: #007bff; color: white; }
 
@@ -262,11 +279,5 @@ onUnmounted(() => {
     background-color: #f0f8ff; 
     color: #007bff;
     padding-left: 1.5rem; 
-}
-
-.list-group-item:last-child {
-    border-bottom: none;
-    border-bottom-left-radius: 8px;
-    border-bottom-right-radius: 8px;
 }
 </style>
