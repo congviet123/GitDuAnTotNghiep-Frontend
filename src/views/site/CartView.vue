@@ -1,27 +1,29 @@
 <script setup>
-import { ref, onMounted, computed, reactive, onBeforeUnmount, watch } from 'vue';
+import { ref, onMounted, computed, reactive, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
-import apiClient from '@/services/api'; // Đảm bảo đường dẫn đúng
+import apiClient from '@/services/api';
 import Swal from 'sweetalert2';
 import * as bootstrap from 'bootstrap';
+import { useAuthStore } from '@/store/auth';
 
 const router = useRouter();
+const authStore = useAuthStore();
 
 // --- STATE ---
 const cartItems = ref([]);
-const selectedProductIds = ref([]);
+const selectedProductIds = ref([]); // Lưu Product ID để xử lý logic thanh toán
 const addressError = ref(null);
 
 // Quản lý địa chỉ
-const savedAddresses = ref([]); // Danh sách địa chỉ từ API
-const addressType = ref('new'); // 'saved' hoặc 'new'
-const selectedAddressId = ref(null); // ID địa chỉ được chọn
+const savedAddresses = ref([]);
+const addressType = ref('new');
+const selectedAddressId = ref(null);
 
 // Modal instances
 let checkoutModalInstance = null;
 let qrModalInstance = null;
 
-// Biến phục vụ thanh toán Online
+// Biến thanh toán Online
 const createdOrder = ref(null); 
 let pollingInterval = null;     
 
@@ -31,22 +33,26 @@ const shopBank = ref({
     accountName: ''
 });
 
-// Dữ liệu đơn hàng gửi đi
+// Dữ liệu đơn hàng
 const orderData = reactive({
     recipientName: '', 
     recipientPhone: '', 
-    shippingAddress: '', // Nếu nhập mới thì dùng cái này
+    shippingAddress: '', 
     notes: '', 
     paymentMethod: 'COD'
 });
 
 // --- COMPUTED ---
+const isAuthenticated = computed(() => authStore.isAuthenticated);
+
+// Lọc ra các item (dòng giỏ hàng) được chọn dựa trên Product ID
 const selectedItems = computed(() => {
-    return cartItems.value.filter(item => selectedProductIds.value.includes(item.productId));
+    return cartItems.value.filter(item => selectedProductIds.value.includes(item.product.id));
 });
 
+// Tính tổng tiền: item.product.price * item.quantity
 const totalSelectedAmount = computed(() => {
-    return selectedItems.value.reduce((sum, item) => sum + parseFloat(item.price) * item.quantity, 0);
+    return selectedItems.value.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
 });
 
 // QR Code
@@ -57,14 +63,22 @@ const qrCodeUrlCreated = computed(() => {
     return `https://img.vietqr.io/image/${shopBank.value.bankId}-${shopBank.value.accountNo}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}`;
 });
 
-// Kiểm tra login (đơn giản hóa bằng localStorage)
-const isAuthenticated = computed(() => !!localStorage.getItem('token'));
+// --- [SỬA LỖI ẢNH Ở ĐÂY] ---
+const getImageUrl = (imagePath) => {
+    if (!imagePath) return 'https://placehold.co/100x100?text=No+Image';
+    if (imagePath.startsWith('http')) return imagePath;
 
-// --- HELPER ---
-const getImageUrl = (imageName) => {
-    if (!imageName) return 'https://placehold.co/100x100?text=No+Image';
-    if (imageName.startsWith('http')) return imageName;
-    return `http://localhost:8080/imgs/${imageName}`;
+    // Server Backend đang chạy ở port 8080
+    const baseUrl = 'http://localhost:8080';
+
+
+    // Trường hợp DB lưu đường dẫn đầy đủ 'imgs/tao.jpg'
+    if (imagePath.startsWith('imgs/')) {
+        return `${baseUrl}/${imagePath}`;
+    }
+
+    // Trường hợp dự phòng: Nếu DB chỉ lưu tên file 'tao.jpg' thì mới thêm 'imgs/'
+    return `${baseUrl}/imgs/${imagePath}`;
 };
 
 const formatPrice = (value) => {
@@ -76,71 +90,81 @@ const fetchCartItems = async () => {
     if (!isAuthenticated.value) return;
     try {
         const response = await apiClient.get('/cart');
-        cartItems.value = response.data;
+        cartItems.value = response.data; // Dữ liệu trả về là List<Cart> (Entity)
+        
         // Mặc định chọn hết nếu chưa chọn gì
         if(cartItems.value.length > 0 && selectedProductIds.value.length === 0) {
-            selectedProductIds.value = cartItems.value.map(item => item.productId);
+            selectedProductIds.value = cartItems.value.map(item => item.product.id);
         }
     } catch (error) { console.error('Lỗi tải giỏ hàng:', error); }
 };
 
 const fetchBankInfo = async () => {
     try {
-        // Mock data nếu chưa có API backend thật
-        // shopBank.value = { bankId: 'MB', accountNo: '0901234567', accountName: 'NGUYEN VAN A' };
-        
-        // Nếu đã có API thật thì dùng dòng này:
-        const response = await apiClient.get('/sepay/bank-info');
-        shopBank.value = response.data;
-    } catch (error) {
-        console.error('Lỗi bank info:', error);
-    }
+        // [TODO]: Thay bằng API thật nếu có
+        shopBank.value = { bankId: 'TPB', accountNo: '0901111222', accountName: 'TRAI CAY BAY SHOP' };
+    } catch (error) { console.error('Lỗi bank info:', error); }
 };
 
-const updateQuantityAPI = async (productId, newQuantity) => {
-    if (newQuantity === null || newQuantity <= 0) { removeItem(productId); return; }
-    newQuantity = Math.round(newQuantity * 10) / 10;
+// Logic Update số lượng
+const updateQuantityAPI = async (cartId, newQuantity) => {
+    if (newQuantity === null || newQuantity <= 0) { 
+        removeItem(cartId); 
+        return; 
+    }
+    
+    newQuantity = Math.round(newQuantity * 10) / 10; // Làm tròn 1 số thập phân
+    
     try {
-        const response = await apiClient.put(`/cart/${productId}?quantity=${newQuantity}`);
+        const response = await apiClient.put(`/cart/${cartId}?quantity=${newQuantity}`);
         cartItems.value = response.data;
     } catch (error) {
-        Swal.fire('Lỗi', 'Không thể cập nhật số lượng', 'error');
-        fetchCartItems();
+        let msg = error.response?.data?.message || error.response?.data || 'Không thể cập nhật';
+        Swal.fire('Lỗi', msg, 'error');
+        fetchCartItems(); 
     }
 };
 
-const increaseQuantity = (pid) => { const item = cartItems.value.find(i => i.productId === pid); if(item) updateQuantityAPI(pid, item.quantity + 0.5); };
-const decreaseQuantity = (pid) => { const item = cartItems.value.find(i => i.productId === pid); if(item && item.quantity > 0.5) updateQuantityAPI(pid, item.quantity - 0.5); else removeItem(pid); };
-const onQuantityInputChange = (pid, event) => { const val = parseFloat(event.target.value); if(!isNaN(val)) updateQuantityAPI(pid, val); };
+const increaseQuantity = (item) => { 
+    updateQuantityAPI(item.id, item.quantity + 0.5); 
+};
 
-const removeItem = async (productId) => {
+const decreaseQuantity = (item) => { 
+    if(item.quantity > 0.5) updateQuantityAPI(item.id, item.quantity - 0.5); 
+    else removeItem(item.id); 
+};
+
+const onQuantityInputChange = (item, event) => { 
+    const val = parseFloat(event.target.value); 
+    if(!isNaN(val)) updateQuantityAPI(item.id, val); 
+};
+
+const removeItem = async (cartId) => {
     const result = await Swal.fire({ title: 'Xác nhận xóa?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Xóa', cancelButtonText: 'Hủy' });
     if (result.isConfirmed) {
         try {
-            const res = await apiClient.delete(`/cart/${productId}`);
-            cartItems.value = res.data;
-            selectedProductIds.value = selectedProductIds.value.filter(id => id !== productId);
+            const res = await apiClient.delete(`/cart/${cartId}`);
+            cartItems.value = res.data; 
+            
+            // Xóa item khỏi danh sách selectedProductIds nếu nó bị xóa khỏi giỏ
+            // (Code này đảm bảo tính nhất quán UI)
+            const currentProductIds = cartItems.value.map(i => i.product.id);
+            selectedProductIds.value = selectedProductIds.value.filter(id => currentProductIds.includes(id));
+
         } catch (e) { console.error(e); }
     }
 };
 
 // --- METHODS (CHECKOUT) ---
-
-// [MỚI] Lấy danh sách địa chỉ từ bảng Address
 const fetchSavedAddresses = async () => {
     try {
-        const res = await apiClient.get('/api/addresses'); // Gọi API Address mới
+        const res = await apiClient.get('/addresses');
         savedAddresses.value = res.data;
         
         if (savedAddresses.value.length > 0) {
             addressType.value = 'saved';
-            // Tìm địa chỉ mặc định
             const defaultAddr = savedAddresses.value.find(a => a.isDefault);
-            if (defaultAddr) {
-                selectedAddressId.value = defaultAddr.id;
-            } else {
-                selectedAddressId.value = savedAddresses.value[0].id;
-            }
+            selectedAddressId.value = defaultAddr ? defaultAddr.id : savedAddresses.value[0].id;
         } else {
             addressType.value = 'new';
         }
@@ -167,7 +191,6 @@ const submitOrder = async () => {
     let finalRecipientPhone = '';
     let finalShippingAddress = '';
 
-    // Logic lấy địa chỉ
     if (addressType.value === 'saved') {
         if (!selectedAddressId.value) {
             addressError.value = "Vui lòng chọn một địa chỉ.";
@@ -177,11 +200,9 @@ const submitOrder = async () => {
         if (addr) {
             finalRecipientName = addr.fullname;
             finalRecipientPhone = addr.phone;
-            // Ghép chuỗi địa chỉ đầy đủ
-            finalShippingAddress = `${addr.addressLine}, ${addr.ward}, ${addr.district}, ${addr.province}`;
+            finalShippingAddress = addr.addressLine + ', ' + addr.ward + ', ' + addr.district + ', ' + addr.province;
         }
     } else {
-        // Nhập mới
         if (!orderData.shippingAddress.trim()) { addressError.value = "Vui lòng nhập địa chỉ."; return; }
         if (!orderData.recipientName || !orderData.recipientPhone) { addressError.value = "Thiếu thông tin người nhận."; return; }
         
@@ -190,16 +211,15 @@ const submitOrder = async () => {
         finalShippingAddress = orderData.shippingAddress;
     }
 
-    // Tạo payload đúng chuẩn OrderCreateDTO
     const orderDTO = {
         recipientName: finalRecipientName,
         recipientPhone: finalRecipientPhone,
         shippingAddress: finalShippingAddress,
         notes: orderData.notes,
         paymentMethod: orderData.paymentMethod,
-        voucherCode: null, // Chưa xử lý voucher
+        voucherCode: null,
         items: selectedItems.value.map(item => ({
-            productId: item.productId,
+            productId: item.product.id,
             quantity: item.quantity
         }))
     };
@@ -207,10 +227,8 @@ const submitOrder = async () => {
     try {
         const res = await apiClient.post('/orders', orderDTO);
         
-        // 1. Tắt modal nhập thông tin
         if (checkoutModalInstance) checkoutModalInstance.hide();
 
-        // 2. Kiểm tra phương thức thanh toán
         if (orderData.paymentMethod === 'BANK') {
             createdOrder.value = res.data; 
             if (qrModalInstance) qrModalInstance.show();
@@ -221,25 +239,23 @@ const submitOrder = async () => {
         }
     } catch (error) {
         console.error(error);
-        let errorMsg = 'Có lỗi xảy ra.';
-        if(error.response && error.response.data) errorMsg = error.response.data.message || error.response.data;
-        Swal.fire('Lỗi đặt hàng', typeof errorMsg === 'string' ? errorMsg : 'Lỗi hệ thống', 'error');
+        let errorMsg = error.response?.data?.message || error.response?.data || 'Có lỗi xảy ra.';
+        Swal.fire('Lỗi đặt hàng', typeof errorMsg === 'string' ? errorMsg : JSON.stringify(errorMsg), 'error');
     }
 };
 
-// Polling
 const startPollingOrder = (orderId) => {
     if (pollingInterval) clearInterval(pollingInterval);
     pollingInterval = setInterval(async () => {
         try {
             const res = await apiClient.get(`/orders/${orderId}`);
             const status = res.data.status;
-            if (status === 'CONFIRMED' || status === 'PAID') { // Điều chỉnh status theo Backend của bạn
+            if (status === 'CONFIRMED' || status === 'PAID' || status === 'COMPLETED') { 
                 clearInterval(pollingInterval); 
                 if (qrModalInstance) qrModalInstance.hide();
                 await Swal.fire({
                     title: 'Thanh toán thành công!',
-                    text: 'Hệ thống đã xác nhận tiền về tài khoản.',
+                    text: 'Đơn hàng đã được xác nhận.',
                     icon: 'success',
                     timer: 3000,
                     showConfirmButton: false
@@ -255,10 +271,13 @@ onBeforeUnmount(() => {
 });
 
 onMounted(() => {
+    if (!isAuthenticated.value) {
+        router.push('/login');
+        return;
+    }
     fetchCartItems();
     fetchBankInfo();
     
-    // Khởi tạo Bootstrap Modals
     const checkoutEl = document.getElementById('checkoutModal');
     if (checkoutEl) checkoutModalInstance = new bootstrap.Modal(checkoutEl);
     
@@ -277,31 +296,45 @@ onMounted(() => {
                     <thead class="table-dark">
                         <tr>
                             <th class="text-center py-3">Chọn</th>
-                            <th class="py-3">Sản phẩm</th> <th class="py-3">Đơn giá</th>
+                            <th class="py-3">Sản phẩm</th> 
+                            <th class="py-3">Đơn giá</th>
                             <th class="py-3" style="width: 160px;">Số lượng (Kg)</th>
                             <th class="py-3">Thành tiền</th>
                             <th class="text-center py-3">Xóa</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="item in cartItems" :key="item.productId">
-                            <td class="text-center"><input type="checkbox" v-model="selectedProductIds" :value="item.productId" class="form-check-input select-checkbox"></td>
+                        <tr v-for="item in cartItems" :key="item.id">
+                            <td class="text-center">
+                                <input type="checkbox" v-model="selectedProductIds" :value="item.product.id" class="form-check-input select-checkbox">
+                            </td>
                             <td>
                                 <div class="d-flex align-items-center">
-                                    <img :src="getImageUrl(item.image)" width="60" height="60" class="rounded object-fit-cover me-3 border">
-                                    <div><div class="fw-bold text-truncate" style="max-width: 200px;">{{ item.productName }}</div><small class="text-muted">#{{ item.productId }}</small></div>
+                                    <img :src="getImageUrl(item.product.image)" 
+                                         width="60" height="60" 
+                                         class="rounded object-fit-cover me-3 border"
+                                         @error="$event.target.src='https://placehold.co/100x100?text=No+Image'">
+                                    
+                                    <div>
+                                        <div class="fw-bold text-truncate" style="max-width: 200px;">{{ item.product.name }}</div>
+                                        <small class="text-muted">#{{ item.product.id }}</small>
+                                    </div>
                                 </div>
                             </td>
-                            <td>{{ formatPrice(item.price) }}/kg</td>
+                            <td>{{ formatPrice(item.product.price) }}/kg</td>
                             <td>
                                 <div class="input-group input-group-sm">
-                                    <button @click="decreaseQuantity(item.productId)" class="btn btn-outline-secondary" type="button"><i class="bi bi-dash"></i></button>
-                                    <input type="number" step="0.1" min="0.1" :value="item.quantity" @change="onQuantityInputChange(item.productId, $event)" class="form-control text-center bg-white border-secondary-subtle fw-bold">
-                                    <button @click="increaseQuantity(item.productId)" class="btn btn-outline-secondary" type="button"><i class="bi bi-plus"></i></button>
+                                    <button @click="decreaseQuantity(item)" class="btn btn-outline-secondary" type="button"><i class="bi bi-dash"></i></button>
+                                    <input type="number" step="0.1" min="0.1" :value="item.quantity" @change="onQuantityInputChange(item, $event)" class="form-control text-center bg-white border-secondary-subtle fw-bold">
+                                    <button @click="increaseQuantity(item)" class="btn btn-outline-secondary" type="button"><i class="bi bi-plus"></i></button>
                                 </div>
                             </td>
-                            <td class="text-danger fw-bold">{{ formatPrice(item.price * item.quantity) }}</td>
-                            <td class="text-center"><button @click="removeItem(item.productId)" class="btn btn-link text-danger p-0 hover-scale"><i class="bi bi-trash fs-5"></i></button></td>
+                            <td class="text-danger fw-bold">{{ formatPrice(item.product.price * item.quantity) }}</td>
+                            <td class="text-center">
+                                <button @click="removeItem(item.id)" class="btn btn-link text-danger p-0 hover-scale">
+                                    <i class="bi bi-trash fs-5"></i>
+                                </button>
+                            </td>
                         </tr>
                     </tbody>
                 </table>
@@ -404,12 +437,12 @@ onMounted(() => {
                                 <div class="col-md-5 bg-light p-3 rounded">
                                     <h6 class="fw-bold border-bottom pb-2 mb-3">Đơn hàng của bạn</h6>
                                     <div style="max-height: 250px; overflow-y: auto;">
-                                        <div v-for="item in selectedItems" :key="item.productId" class="d-flex justify-content-between align-items-center mb-2 small border-bottom pb-2">
+                                        <div v-for="item in selectedItems" :key="item.id" class="d-flex justify-content-between align-items-center mb-2 small border-bottom pb-2">
                                             <div class="d-flex align-items-center">
-                                                <img :src="getImageUrl(item.image)" width="40" height="40" class="rounded border me-2 object-fit-cover">
-                                                <div><div class="text-truncate" style="max-width: 120px;">{{ item.productName }}</div><div class="text-muted">x{{ item.quantity }} kg</div></div>
+                                                <img :src="getImageUrl(item.product.image)" width="40" height="40" class="rounded border me-2 object-fit-cover">
+                                                <div><div class="text-truncate" style="max-width: 120px;">{{ item.product.name }}</div><div class="text-muted">x{{ item.quantity }} kg</div></div>
                                             </div>
-                                            <div class="fw-semibold">{{ formatPrice(item.price * item.quantity) }}</div>
+                                            <div class="fw-semibold">{{ formatPrice(item.product.price * item.quantity) }}</div>
                                         </div>
                                     </div>
                                     <div class="mt-3 pt-2 border-top">
