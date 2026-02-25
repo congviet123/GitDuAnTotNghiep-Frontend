@@ -6,7 +6,7 @@ import { useCartStore } from '@/store/cart';
 import apiClient from '@/services/api'; 
 
 const authStore = useAuthStore();
-const cartStore = useCartStore();
+const cartStore = useCartStore(); // Khởi tạo store giỏ hàng
 const router = useRouter();
 const keyword = ref('');
 
@@ -20,15 +20,10 @@ const categories = ref([]);
 // --- LOGIC ---
 const fetchCategories = async () => {
     try {
-        // api.js đã có baseURL là '/rest'
-        // Nên ở đây chỉ gọi '/client/categories'
-        // Kết quả thực tế: http://localhost:8080/rest/client/categories
         const res = await apiClient.get('/client/categories');
         categories.value = res.data;
     } catch (err) {
         console.error("Lỗi tải danh mục header:", err);
-        // Lưu ý: Nếu lỗi 401 xảy ra ở đây, api.js sẽ tự động logout.
-        // Điều này là bảo mật đúng: Token sai thì phải bắt đăng nhập lại.
     }
 };
 
@@ -60,15 +55,15 @@ const handleSearch = () => {
 
 const handleLogout = () => {
     authStore.logout();
+    cartStore.clearCart(); // Xóa sạch giỏ hàng hiển thị khi đăng xuất
     router.push('/login');
 };
 
-// Logic check quyền Admin an toàn (tránh lỗi null)
+// Logic check quyền Admin an toàn
 const isAdmin = computed(() => {
     const user = authStore.user;
     if (!user || !user.role) return false;
     
-    // Hỗ trợ cả trường hợp role là Object hoặc String (tùy Backend trả về)
     const roleName = user.role.name || user.role;
     return roleName === 'ROLE_ADMIN' || roleName === 'ADMIN' || roleName === 'ROLE_STAFF';
 });
@@ -77,8 +72,9 @@ onMounted(() => {
     document.addEventListener('click', closeDropdowns); 
     fetchCategories();
     
-    // Nếu có giỏ hàng, tải lại giỏ hàng (nếu backend cần sync)
-    // if (authStore.isAuthenticated) cartStore.fetchCart(); 
+    // [SỬA LỖI]: Bỏ comment dòng này để giỏ hàng tự động tải số lượng khi load trang
+    // Không cần check authStore.isAuthenticated vì store tự biết nếu khách chưa login thì lấy từ LocalStorage
+    cartStore.fetchCart(); 
 });
 
 onUnmounted(() => { 
