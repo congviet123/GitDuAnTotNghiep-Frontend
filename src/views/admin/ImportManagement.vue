@@ -1,7 +1,11 @@
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import Swal from 'sweetalert2';
 import * as bootstrap from 'bootstrap';
+import importService from "@/services/importService";
+import axios from "axios";
+import supplierService from "@/services/supplierService";
+import productService from "@/services/productService";
 
 // --- STATE ---
 const imports = ref([]);
@@ -27,82 +31,38 @@ const form = reactive({
 
 const selectedImport = ref(null);
 
-// --- MOCK DATA ---
-onMounted(() => {
+// móc dữ liệu
+onMounted(async () => {
     const importModalEl = document.getElementById('importModal');
     const detailModalEl = document.getElementById('detailModal');
 
-    if (importModalEl) importModal.value = new bootstrap.Modal(importModalEl);
-    if (detailModalEl) detailModal.value = new bootstrap.Modal(detailModalEl);
+    if (importModalEl) {
+        importModal.value = new bootstrap.Modal(importModalEl);
+    }
 
-    products.value = [
-        { id: 1, name: "Cherry Đỏ Canada", unit: "kg" },
-        { id: 2, name: "Dâu Tây Hàn Quốc", unit: "hộp" },
-        { id: 3, name: "Cam Vàng Navel", unit: "kg" },
-        { id: 4, name: "Nho Mẫu Đơn", unit: "chùm" }
-    ];
+    if (detailModalEl) {
+        detailModal.value = new bootstrap.Modal(detailModalEl);
+    }
 
-    suppliers.value = [
-        { id: 1, name: "Công ty TNHH Rau Sạch Việt" },
-        { id: 2, name: "Vựa Trái Cây Miền Tây" },
-        { id: 3, name: "Nông Trại Organic Đà Lạt" }
-    ];
-
-    // Dữ liệu mẫu phong phú hơn để test tìm kiếm
-    imports.value = [
-        {
-            id: 101, import_date: '2026-01-20 08:30', supplier_name: "Công ty TNHH Rau Sạch Việt", 
-            account: "Admin", total_amount: 15000000, notes: "Nhập hàng tết",
-            details: [
-                { product_name: "Cherry Đỏ Canada", quantity: 50, unit_price: 200000, total: 10000000 },
-                { product_name: "Dâu Tây Hàn Quốc", quantity: 100, unit_price: 50000, total: 5000000 }
-            ]
-        },
-        {
-            id: 102, import_date: '2026-01-25 14:00', supplier_name: "Vựa Trái Cây Miền Tây", 
-            account: "Thảo Vy", total_amount: 8500000, notes: "Hàng đặt trước",
-            details: [
-                { product_name: "Cam Vàng Navel", quantity: 200, unit_price: 42500, total: 8500000 }
-            ]
-        },
-        {
-            id: 103, import_date: '2026-01-27 09:15', supplier_name: "Nông Trại Organic Đà Lạt", 
-            account: "Admin", total_amount: 12000000, notes: "Nhập rau củ",
-            details: [
-                { product_name: "Nho Mẫu Đơn", quantity: 20, unit_price: 600000, total: 12000000 }
-            ]
-        }
-    ];
+    loadImports();
+    suppliers.value = (await supplierService.getAll()).data;
+    products.value = (await productService.getAll()).data;
 });
+    
+    //                                code mới của tuyến 
+        const loadImports = async () => {
+        const res = await importService.getAll({
+            keyword: filters.keyword || null,
+            startDate: filters.startDate || null,
+            endDate: filters.endDate || null
+        });
+        imports.value = res.data;
+    };
 
-// --- FILTERED DATA (LOGIC TÌM KIẾM) ---
-const filteredImports = computed(() => {
-    return imports.value.filter(item => {
-        // 1. Tìm theo từ khóa (Mã phiếu, NCC, Nhân viên)
-        const keyword = filters.keyword.toLowerCase();
-        const matchKeyword = 
-            item.id.toString().includes(keyword) || 
-            item.supplier_name.toLowerCase().includes(keyword) || 
-            item.account.toLowerCase().includes(keyword);
-
-        if (!matchKeyword) return false;
-
-        // 2. Tìm theo khoảng thời gian
-        if (filters.startDate || filters.endDate) {
-            // Chuyển đổi ngày từ chuỗi 'YYYY-MM-DD HH:mm' sang Date object để so sánh
-            // Format mock data là 'YYYY-MM-DD HH:mm', cần parse đúng
-            const itemDatePart = item.import_date.split(' ')[0]; // Lấy '2026-01-20'
-            const itemTime = new Date(itemDatePart).getTime();
-
-            const startTime = filters.startDate ? new Date(filters.startDate).getTime() : 0;
-            const endTime = filters.endDate ? new Date(filters.endDate).getTime() : Infinity;
-
-            if (itemTime < startTime || itemTime > endTime) return false;
-        }
-
-        return true;
-    });
-});
+//                                           code mới của tuyến
+watch(filters, () => {
+    loadImports();
+}, { deep: true });
 
 const resetFilters = () => {
     filters.keyword = '';
@@ -119,11 +79,18 @@ const formTotalAmount = computed(() => {
 });
 
 // --- ACTIONS FORM ---
-const openCreateModal = () => {
+import { nextTick } from 'vue';
+
+const openCreateModal = async () => {
     form.supplier_id = '';
     form.notes = '';
     form.details = [{ product_id: '', quantity: 1, unit_price: 0 }];
-    if (importModal.value) importModal.value.show();
+
+    await nextTick();
+
+    const modalEl = document.getElementById('importModal');
+    const modal = new bootstrap.Modal(modalEl);
+    modal.show();
 };
 
 const addDetailRow = () => {
@@ -134,52 +101,38 @@ const removeDetailRow = (index) => {
     if (form.details.length > 1) form.details.splice(index, 1);
 };
 
-const saveImport = () => {
-    if (!form.supplier_id) {
-        Swal.fire('Lỗi', 'Vui lòng chọn nhà cung cấp!', 'error');
-        return;
+   //                                              save import code mới của tuyến
+   const saveImport = async () => {
+    try {
+        const payload = {
+            supplierId: Number(form.supplier_id),
+            accountUsername: form.account_username,
+            notes: form.notes,
+            totalAmount: formTotalAmount.value,
+            details: form.details.map(d => ({
+            productId: Number(d.product_id),
+            quantity: Number(d.quantity),
+            unitPrice: Number(d.unit_price)
+            }))
+        };
+
+        await importService.create(payload);
+        
+        Swal.fire("Thành công", "Đã lưu phiếu nhập!", "success");
+        importModal.value.hide();
+        await loadImports();
+    } catch (e) {
+        Swal.fire("Lỗi", "Không thể lưu phiếu nhập", "error");
     }
-    const invalidRow = form.details.find(d => !d.product_id || d.quantity <= 0 || d.unit_price <= 0);
-    if (invalidRow) {
-        Swal.fire('Lỗi', 'Kiểm tra lại thông tin sản phẩm (Số lượng > 0, Giá > 0)', 'error');
-        return;
-    }
-
-    // Lấy ngày giờ hiện tại định dạng YYYY-MM-DD HH:mm để khớp với logic lọc
-    const now = new Date();
-    const dateStr = now.toISOString().split('T')[0];
-    const timeStr = now.toTimeString().split(' ')[0].substring(0, 5);
-    const fullDate = `${dateStr} ${timeStr}`;
-
-    const supplierName = suppliers.value.find(s => s.id === form.supplier_id)?.name;
-    const newImport = {
-        id: imports.value.length > 0 ? Math.max(...imports.value.map(i => i.id)) + 1 : 101,
-        import_date: fullDate,
-        supplier_name: supplierName,
-        account: form.account_username,
-        total_amount: formTotalAmount.value,
-        notes: form.notes,
-        details: form.details.map(d => {
-            const p = products.value.find(prod => prod.id === d.product_id);
-            return {
-                product_name: p ? p.name : 'Unknown',
-                quantity: d.quantity,
-                unit_price: d.unit_price,
-                total: d.quantity * d.unit_price
-            };
-        })
-    };
-
-    imports.value.unshift(newImport);
-    Swal.fire('Thành công', 'Đã tạo phiếu nhập hàng!', 'success');
-    if (importModal.value) importModal.value.hide();
 };
 
-// --- XEM CHI TIẾT ---
-const viewDetail = (item) => {
-    selectedImport.value = item;
-    if (detailModal.value) detailModal.value.show();
+//                                    code mới của tuyến
+    const viewDetail = async (item) => {
+    const res = await importService.getById(item.id);
+    selectedImport.value = res.data;
+    detailModal.value.show();
 };
+
 </script>
 
 <template>
@@ -234,27 +187,38 @@ const viewDetail = (item) => {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="item in filteredImports" :key="item.id">
-                            <td class="fw-bold text-primary">#PN{{ item.id }}</td>
-                            <td>{{ item.import_date }}</td>
-                            <td>{{ item.supplier_name }}</td>
-                            <td>
-                                <span class="badge bg-light text-dark border">{{ item.account }}</span>
-                            </td>
-                            <td class="fw-bold text-danger">{{ formatCurrency(item.total_amount) }}</td>
-                            <td class="text-center">
-                                <button class="btn btn-sm btn-outline-info" @click="viewDetail(item)">
-                                    <i class="bi bi-eye"></i> Chi tiết
-                                </button>
-                            </td>
-                        </tr>
-                        <tr v-if="filteredImports.length === 0">
-                            <td colspan="6" class="text-center py-4 text-muted">
-                                <i class="bi bi-inbox fs-1 d-block mb-2 opacity-50"></i>
-                                Không tìm thấy phiếu nhập nào phù hợp.
-                            </td>
-                        </tr>
-                    </tbody>
+  <tr v-for="item in imports" :key="item.id">
+    <td>
+      #PN{{ item.id }}
+    </td>
+
+    <td>
+      {{ item.importDate 
+          ? new Date(item.importDate).toLocaleDateString('vi-VN') 
+          : '' }}
+    </td>
+
+    <td>
+      NCC #{{ item.supplierId }}
+    </td>
+
+    <td>
+      {{ item.accountUsername }}
+    </td>
+
+    <td>
+      {{ item.totalAmount 
+          ? Number(item.totalAmount).toLocaleString('vi-VN') + ' đ' 
+          : '0 đ' }}
+    </td>
+
+    <td>
+      <button class="btn btn-info btn-sm">
+        Chi tiết
+      </button>
+    </td>
+  </tr>
+</tbody>
                 </table>
             </div>
         </div>
