@@ -2,12 +2,14 @@
 import { reactive, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router'; 
 import { useAuthStore } from '@/store/auth';
+import { useCartStore } from '@/store/cart'; // [MỚI] Thêm cart store
 import apiClient from '@/services/api';
 import Swal from 'sweetalert2';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
+const cartStore = useCartStore(); // [MỚI] Khởi tạo cart store
 const form = reactive({ username: '', password: '' });
 
 const Toast = Swal.mixin({
@@ -31,6 +33,10 @@ const handleLogin = async () => {
         });
         const userData = res.data; 
         authStore.login(userData, null); 
+        
+        // [QUAN TRỌNG] Đồng bộ giỏ hàng từ LocalStorage lên DB ngay sau khi đăng nhập thành công
+        await cartStore.syncLocalCartToDatabase();
+
         Toast.fire({ icon: 'success', title: 'Đăng nhập thành công!' });
         redirectUser();
     } catch (err) {
@@ -65,6 +71,10 @@ const checkGoogleLogin = async () => {
             const response = await apiClient.get('/account/profile');
             if (response.data) {
                 authStore.login(response.data);
+                
+                // [QUAN TRỌNG] Đồng bộ giỏ hàng sau khi login Google
+                await cartStore.syncLocalCartToDatabase();
+
                 Swal.close(); 
                 await Toast.fire({ icon: 'success', title: 'Đăng nhập Google thành công!' });
                 
@@ -95,7 +105,7 @@ const checkGoogleLogin = async () => {
                 }
             });
         } 
-        // [CẬP NHẬT] Bắt lỗi tài khoản bị khóa từ Google
+        // Bắt lỗi tài khoản bị khóa từ Google
         else if (errorType === 'disabled') {
              Swal.fire({
                 icon: 'error',
@@ -166,4 +176,4 @@ onMounted(() => {
 
 <style scoped>
 .login-container { min-height: 80vh; }
-</style>    
+</style>

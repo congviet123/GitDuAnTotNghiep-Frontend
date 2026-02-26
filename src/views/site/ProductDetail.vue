@@ -4,45 +4,45 @@ import { ref, onMounted, reactive } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import apiClient from '@/services/api';
 import { useAuthStore } from '@/store/auth';
+import { useCartStore } from '@/store/cart'; 
 import Swal from 'sweetalert2';
 
 const route = useRoute();
 const router = useRouter(); 
 const authStore = useAuthStore();   
+const cartStore = useCartStore(); 
 const product = ref({});
 const reviews = ref([]);
 const newReview = reactive({ rating: 5, comment: '' });
+
+//  Biến trạng thái kiểm tra quyền đánh giá
+const canUserReview = ref(false);
 
 onMounted(async () => {
     const productId = route.params.id;
     if (productId) {
         await fetchProductDetail(productId);
         await fetchReviews(productId);
+        
+        // [BỔ SUNG]: Chỉ check quyền review nếu khách đã đăng nhập
+        if (authStore.isAuthenticated) {
+            await checkCanReview(productId);
+        }
     }
 });
 
 //  Hàm xử lý ảnh chuẩn xác
 const getImageUrl = (imageName) => {
     if (!imageName) return 'https://placehold.co/300x300?text=No+Image';
-    
-    // 1. Nếu là link online hoặc blob preview thì giữ nguyên
     if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
 
-    // 2. Chuẩn hóa tên file để ghép với cổng Backend 8080
     let cleanName = imageName;
+    if (cleanName.startsWith('/')) cleanName = cleanName.substring(1);
 
-    // Bỏ dấu gạch chéo đầu (nếu có)
-    if (cleanName.startsWith('/')) {
-        cleanName = cleanName.substring(1);
-    }
-
-    // Bỏ prefix "imgs/" nếu có (Vì Backend đã map /imgs/** vào thư mục gốc rồi)
-    if (cleanName.startsWith('imgs/')) {
-        cleanName = cleanName.substring(5);
-    }
+    const baseUrl = 'http://localhost:8080';
+    if (cleanName.startsWith('imgs/')) return `${baseUrl}/${cleanName}`;
     
-    // Kết quả: http://localhost:8080/imgs/ten_file.jpg
-    return `http://localhost:8080/imgs/${cleanName}`;
+    return `${baseUrl}/imgs/${cleanName}`;
 };
 
 const fetchProductDetail = async (id) => {
@@ -64,6 +64,17 @@ const fetchReviews = async (id) => {
     }
 };
 
+//  Hàm gọi API kiểm tra quyền đánh giá
+const checkCanReview = async (id) => {
+    try {
+        const res = await apiClient.get(`/client/products/${id}/can-review`);
+        canUserReview.value = res.data; // Trả về true (được đánh giá) / false (không được)
+    } catch (err) {
+        console.error("Lỗi check quyền review", err);
+        canUserReview.value = false;
+    }
+};
+
 const submitReview = async () => {
     if (!newReview.comment.trim()) {
         Swal.fire('Thông báo', 'Vui lòng nhập nội dung đánh giá', 'warning');
@@ -79,44 +90,25 @@ const submitReview = async () => {
         
         Swal.fire('Thành công', 'Cảm ơn bạn đã đánh giá!', 'success');
         
-        // Reset form và load lại
+        // Reset form và load lại danh sách đánh giá
         newReview.comment = '';
         newReview.rating = 5;
         await fetchReviews(product.value.id);
         
+        // [BỔ SUNG]: Cập nhật lại quyền (Khách vừa đánh giá xong thì khóa lại)
+        await checkCanReview(product.value.id);
+        
     } catch (err) {
         console.error(err);
-        Swal.fire('Lỗi', 'Không thể gửi đánh giá. Vui lòng thử lại.', 'error');
+        Swal.fire('Lỗi', err.response?.data || 'Không thể gửi đánh giá. Vui lòng thử lại.', 'error');
     }
 };
 
 const addToCart = async () => {
-    if (!authStore.isAuthenticated) {
-        Swal.fire({
-            title: 'Yêu cầu đăng nhập',
-            text: 'Bạn cần đăng nhập để thêm vào giỏ hàng!',
-            icon: 'info',
-            showCancelButton: true,
-            confirmButtonText: 'Đăng nhập',
-            cancelButtonText: 'Để sau'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                router.push('/login');
-            }
-        });
-        return;
-    }
-
     try {
-        await apiClient.post('/cart/add', { productId: product.value.id, quantity: 1 });
-        if (window.Toast) {
-            window.Toast.fire({ icon: 'success', title: 'Đã thêm vào giỏ hàng!' });
-        } else {
-             Swal.fire('Thành công', 'Đã thêm vào giỏ hàng!', 'success');
-        }
+        await cartStore.addToCart(product.value, 1);
     } catch (err) {
         console.error(err);
-        Swal.fire('Lỗi', 'Có lỗi xảy ra khi thêm vào giỏ', 'error');
     }
 };
 
@@ -134,7 +126,7 @@ const formatPrice = (v) => {
                          class="img-fluid rounded shadow product-detail-img" 
                          :alt="product.name" 
                          loading="lazy"
-                         @error="e => e.target.src = '/imgs/no-image.png'">
+                         @error="e => e.target.src = 'https://placehold.co/300x300?text=No+Image'">
                     
                     <div v-if="product.discount > 0" class="detail-discount-badge">
                         -{{ product.discount }}%
@@ -160,7 +152,7 @@ const formatPrice = (v) => {
                 
                 <p class="text-muted">{{ product.description }}</p>
                 
-                <button @click="addToCart" class="btn btn-primary btn-fruit btn-lg mt-3 shadow">
+                <button @click="addToCart" :disabled="!product.available" class="btn btn-primary btn-fruit btn-lg mt-3 shadow">
                     <i class="bi bi-cart-plus me-2"></i> Thêm vào giỏ hàng
                 </button>
             </div>
@@ -182,6 +174,7 @@ const formatPrice = (v) => {
                 </div>
                 
                 <div class="tab-pane fade" id="rev" role="tabpanel">
+                    
                     <div v-if="reviews.length > 0">
                         <div v-for="r in reviews" :key="r.id" class="border-bottom mb-3 pb-3">
                             <div class="d-flex justify-content-between align-items-center mb-1">
@@ -193,32 +186,41 @@ const formatPrice = (v) => {
                                 </div>
                             </div>
                             <p class="mb-0 text-secondary">{{ r.comment }}</p>
-                            <small class="text-muted fst-italic" v-if="r.createDate">{{ new Date(r.createDate).toLocaleDateString('vi-VN') }}</small>
+                            <small class="text-muted fst-italic" v-if="r.reviewDate">{{ new Date(r.reviewDate).toLocaleDateString('vi-VN') }}</small>
                         </div>
                     </div>
                     <div v-else class="text-center py-3 text-muted">
-                        Chưa có đánh giá nào. Hãy là người đầu tiên đánh giá sản phẩm này!
+                        Chưa có đánh giá nào.
                     </div>
                     
-                    <div v-if="authStore.isAuthenticated" class="mt-4 p-4 bg-light rounded border">
-                        <h5 class="mb-3">Viết đánh giá của bạn:</h5>
-                        <div class="mb-3">
-                            <label class="form-label me-3">Đánh giá sao:</label>
-                            <span v-for="n in 5" :key="n" 
-                                  @click="newReview.rating = n" 
-                                  class="fs-3 cursor-pointer me-1 star-rating" 
-                                  :class="n <= newReview.rating ? 'text-warning' : 'text-muted'">★</span>
+                    <div v-if="authStore.isAuthenticated">
+                        <div v-if="canUserReview" class="mt-4 p-4 bg-light rounded border border-success">
+                            <h5 class="mb-3 text-success"><i class="bi bi-pencil-square me-2"></i>Viết đánh giá của bạn:</h5>
+                            <div class="mb-3">
+                                <label class="form-label me-3">Chất lượng sản phẩm:</label>
+                                <span v-for="n in 5" :key="n" 
+                                      @click="newReview.rating = n" 
+                                      class="fs-3 cursor-pointer me-1 star-rating" 
+                                      :class="n <= newReview.rating ? 'text-warning' : 'text-muted'">★</span>
+                            </div>
+                            <div class="mb-3">
+                                <textarea v-model="newReview.comment" class="form-control" rows="3" placeholder="Chia sẻ cảm nhận của bạn về độ tươi ngon, đóng gói..."></textarea>
+                            </div>
+                            <button @click="submitReview" class="btn btn-success"><i class="bi bi-send me-1"></i> Gửi đánh giá</button>
                         </div>
-                        <div class="mb-3">
-                            <textarea v-model="newReview.comment" class="form-control" rows="3" placeholder="Chia sẻ cảm nhận..."></textarea>
+                        
+                        <div v-else class="alert alert-info mt-4 text-center">
+                            <i class="bi bi-info-circle me-2 fs-5"></i>
+                            <span class="fw-bold">Tính năng đánh giá đang tạm khóa.</span><br>
+                            Bạn chỉ được phép đánh giá sau khi đã <b>mua sản phẩm này</b> và trạng thái đơn hàng là <b>"Giao hàng thành công"</b>.
                         </div>
-                        <button @click="submitReview" class="btn btn-success"><i class="bi bi-send me-1"></i> Gửi đánh giá</button>
                     </div>
                     
                     <div v-else class="alert alert-warning mt-4 text-center">
                         <i class="bi bi-exclamation-circle me-2"></i>
-                        Vui lòng <router-link to="/login" class="fw-bold text-decoration-underline">đăng nhập</router-link> để viết đánh giá.
+                        Vui lòng <router-link to="/login" class="fw-bold text-decoration-underline">đăng nhập</router-link> để xem quyền đánh giá.
                     </div>
+                    
                 </div>
             </div>
         </div>
@@ -233,42 +235,14 @@ const formatPrice = (v) => {
 </template>
 
 <style scoped>
-.product-detail-img {
-    max-height: 400px;
-    object-fit: contain;
-    width: 100%;
-}
-
-/* Style cho Badge giảm giá ở trang chi tiết (To hơn trang danh sách 1 chút) */
-.detail-discount-badge {
-    position: absolute;
-    top: 15px;
-    right: 15px;
-    background-color: #dc3545;
-    color: white;
-    padding: 8px 15px;
-    border-radius: 8px;
-    font-weight: bold;
-    font-size: 1.2rem;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.2);
-    z-index: 10;
-}
-
+.product-detail-img { max-height: 400px; object-fit: contain; width: 100%; }
+.detail-discount-badge { position: absolute; top: 15px; right: 15px; background-color: #dc3545; color: white; padding: 8px 15px; border-radius: 8px; font-weight: bold; font-size: 1.2rem; box-shadow: 0 4px 6px rgba(0,0,0,0.2); z-index: 10; }
 .cursor-pointer { cursor: pointer; }
 .star-rating { transition: transform 0.2s; }
 .star-rating:hover { transform: scale(1.2); }
-.nav-tabs .nav-link.active {
-    color: #ff6b01;
-    border-top: 3px solid #ff6b01;
-}
+.nav-tabs .nav-link.active { color: #ff6b01; border-top: 3px solid #ff6b01; }
 .nav-link { color: #6c757d; }
 
-.btn-fruit { 
-    background-color: #ff6b01; 
-    border-color: #ff6b01; 
-    color: white; 
-}
-.btn-fruit:hover { 
-    background-color: #e65b00; 
-}
+.btn-fruit { background-color: #ff6b01; border-color: #ff6b01; color: white; }
+.btn-fruit:hover { background-color: #e65b00; }
 </style>
