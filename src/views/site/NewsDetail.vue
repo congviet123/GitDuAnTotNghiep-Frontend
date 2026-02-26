@@ -1,35 +1,69 @@
 <script setup>
-import { ref, reactive } from 'vue';
-import { useRoute } from 'vue-router';
+import { ref, reactive, onMounted, onUnmounted } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import apiClient from '@/services/api';
+import { useAuthStore } from '@/store/auth';
+import Swal from 'sweetalert2';
 
 const route = useRoute();
-const articleId = route.params.id; // Lấy ID bài viết từ URL
+const router = useRouter();
+const authStore = useAuthStore();
+const articleId = route.params.id;
+const article = ref(null);
+const isLoading = ref(true);
 
-// --- MOCK DATA BÀI VIẾT CHI TIẾT ---
-const article = {
-    title: "Lợi ích tuyệt vời của quả Cherry đối với sức khỏe tim mạch",
-    date: "12/01/2026",
-    author: "Admin",
-    views: 1250,
-    content: `
-        <p>Cherry (hay còn gọi là quả anh đào) không chỉ có hương vị thơm ngon mà còn là một siêu thực phẩm với vô vàn lợi ích cho sức khỏe. Đặc biệt, loại quả này được mệnh danh là "người bạn tốt" của trái tim.</p>
-        <h4>1. Giàu chất chống oxy hóa</h4>
-        <p>Trong cherry chứa nhiều Anthocyanin - chất tạo nên màu đỏ sẫm của quả. Đây là chất chống oxy hóa mạnh mẽ giúp giảm viêm và ngăn ngừa các tổn thương tế bào.</p>
-        <h4>2. Cải thiện giấc ngủ</h4>
-        <p>Cherry là một trong số ít thực phẩm tự nhiên chứa Melatonin, hormone giúp điều hòa chu kỳ giấc ngủ, giúp bạn ngủ ngon và sâu hơn.</p>
-        <img src="https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=1000&q=80" class="img-fluid rounded my-3" alt="Cherry">
-        <p>Hãy bổ sung cherry vào thực đơn hàng ngày để có một trái tim khỏe mạnh nhé!</p>
-    `
+let viewTimer = null;
+
+// --- HELPER ---
+const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = String(date.getFullYear());
+    return `${day}/${month}/${year}`;
+};
+
+const getImageUrl = (imageName) => {
+    if (!imageName) return 'https://images.unsplash.com/photo-1528825871115-3581a5387919?auto=format&fit=crop&w=1000&q=80';
+    if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
+    let cleanName = imageName.startsWith('/') ? imageName.substring(1) : imageName;
+    if (cleanName.startsWith('imgs/')) cleanName = cleanName.substring(5);
+    return `http://localhost:8080/imgs/${cleanName}`;
+};
+
+// --- METHODS ---
+const fetchArticleDetail = async () => {
+    isLoading.value = true;
+    try {
+        const res = await apiClient.get(`/news/${articleId}`);
+        article.value = res.data;
+        likeCount.value = res.data.likeCount || 0;
+        // Giả sử có trạng thái liked từ BE nếu cần, ở đây FE đang tự quản lý isLiked
+    } catch (err) {
+        console.error("Lỗi tải chi tiết bài viết", err);
+    } finally {
+        isLoading.value = false;
+    }
+};
+
+const incrementView = async () => {
+    try {
+        await apiClient.post(`/news-engagement/view/${articleId}`);
+        console.log("Đã ghi nhận lượt xem sau 15 giây");
+    } catch (err) {
+        console.error("Lỗi tăng lượt xem", err);
+    }
 };
 
 // --- LOGIC TƯƠNG TÁC ---
 const isLiked = ref(false);
-const likeCount = ref(156);
+const likeCount = ref(0);
 const newComment = ref('');
 const replyContent = ref('');
-const activeReplyId = ref(null); // ID comment đang được trả lời
+const activeReplyId = ref(null);
 
-// Dữ liệu Comment mẫu (Đa cấp)
+// Dữ liệu Comment mẫu
 const comments = reactive([
     {
         id: 1, user: "Nguyễn Văn A", avatar: "https://ui-avatars.com/api/?name=NV", 
@@ -37,28 +71,62 @@ const comments = reactive([
         replies: [
             { id: 11, user: "Admin", avatar: "https://ui-avatars.com/api/?name=Admin&background=007bff&color=fff", content: "Cảm ơn bạn đã ủng hộ ạ!", time: "1 giờ trước" }
         ]
-    },
-    {
-        id: 2, user: "Trần Thị B", avatar: "https://ui-avatars.com/api/?name=TB", 
-        content: "Cherry bên mình là nhập khẩu từ đâu vậy ạ?", time: "30 phút trước",
-        replies: []
     }
 ]);
 
-// Xử lý Like
-const toggleLike = () => {
+const toggleLike = async () => {
+    if (!authStore.isAuthenticated) {
+        Swal.fire({
+            title: 'Yêu cầu đăng nhập',
+            text: 'Bạn cần đăng nhập để yêu thích bài viết này!',
+            icon: 'info',
+            showCancelButton: true,
+            confirmButtonText: 'Đăng nhập',
+            cancelButtonText: 'Hủy'
+        }).then((result) => {
+            if (result.isConfirmed) router.push('/login');
+        });
+        return;
+    }
+
+    // Cập nhật UI ngay lập tức
     isLiked.value = !isLiked.value;
     isLiked.value ? likeCount.value++ : likeCount.value--;
+
+    try {
+        await apiClient.post(`/news-engagement/like/${articleId}`);
+    } catch (err) {
+        console.error("Lỗi toggle like", err);
+        // Hoàn tác UI nếu lỗi
+        isLiked.value = !isLiked.value;
+        isLiked.value ? likeCount.value++ : likeCount.value--;
+    }
 };
 
-// Xử lý Share
-const handleShare = () => {
+const handleShare = async () => {
     // Copy link hiện tại
-    navigator.clipboard.writeText(window.location.href);
-    alert("Đã sao chép liên kết bài viết!");
+    try {
+        await navigator.clipboard.writeText(window.location.href);
+        
+        if (authStore.isAuthenticated) {
+            // Ghi nhận lượt share lên platform 'copy-link'
+            await apiClient.post(`/news-engagement/share/${articleId}`, null, {
+                params: { platform: 'copy-link' }
+            });
+        }
+        
+        Swal.fire({
+            icon: 'success',
+            title: 'Thành công',
+            text: 'Đã sao chép liên kết bài viết!',
+            timer: 2000,
+            showConfirmButton: false
+        });
+    } catch (err) {
+        console.error("Lỗi share", err);
+    }
 };
 
-// Gửi Comment cha
 const submitComment = () => {
     if (!newComment.value.trim()) return;
     comments.unshift({
@@ -72,13 +140,11 @@ const submitComment = () => {
     newComment.value = '';
 };
 
-// Mở ô nhập Reply
 const toggleReplyInput = (commentId) => {
     activeReplyId.value = activeReplyId.value === commentId ? null : commentId;
     replyContent.value = '';
 };
 
-// Gửi Reply (Comment con)
 const submitReply = (parentComment) => {
     if (!replyContent.value.trim()) return;
     parentComment.replies.push({
@@ -88,14 +154,34 @@ const submitReply = (parentComment) => {
         content: replyContent.value,
         time: "Vừa xong"
     });
-    activeReplyId.value = null; // Đóng ô nhập
+    activeReplyId.value = null;
     replyContent.value = '';
 };
+
+onMounted(() => {
+    fetchArticleDetail();
+    
+    // Đặt timer 15 giây để tăng lượt xem
+    viewTimer = setTimeout(() => {
+        incrementView();
+    }, 15000);
+});
+
+onUnmounted(() => {
+    if (viewTimer) clearTimeout(viewTimer);
+});
 </script>
 
 <template>
     <div class="container py-5">
-        <div class="row justify-content-center">
+        <div v-if="isLoading" class="text-center py-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2 text-muted">Đang tải nội dung...</p>
+        </div>
+
+        <div class="row justify-content-center" v-else-if="article">
             <div class="col-lg-8">
                 <nav aria-label="breadcrumb" class="mb-4">
                     <ol class="breadcrumb">
@@ -106,9 +192,14 @@ const submitReply = (parentComment) => {
 
                 <h1 class="fw-bold mb-3">{{ article.title }}</h1>
                 <div class="d-flex align-items-center text-muted mb-4 small">
-                    <span class="me-3"><i class="bi bi-person-fill"></i> {{ article.author }}</span>
-                    <span class="me-3"><i class="bi bi-calendar3"></i> {{ article.date }}</span>
-                    <span><i class="bi bi-eye"></i> {{ article.views }} lượt xem</span>
+                    <span class="me-3"><i class="bi bi-person-fill"></i> {{ article.authorName }}</span>
+                    <span class="me-3"><i class="bi bi-calendar3"></i> {{ formatDate(article.createDate) }}</span>
+                    <span><i class="bi bi-eye"></i> {{ article.viewCount }} lượt xem</span>
+                </div>
+
+                <!-- Hiển thị ảnh đại diện bài viết nếu có -->
+                <div class="mb-4 text-center" v-if="article.image">
+                    <img :src="getImageUrl(article.image)" class="img-fluid rounded shadow-sm" :alt="article.title" style="max-height: 500px; width: 100%; object-fit: cover;">
                 </div>
 
                 <div class="article-content mb-5" v-html="article.content"></div>
@@ -172,12 +263,18 @@ const submitReply = (parentComment) => {
                 </div>
             </div>
         </div>
+
+        <div v-else class="text-center py-5">
+            <p class="text-muted">Không tìm thấy bài viết.</p>
+            <router-link to="/news" class="btn btn-primary">Quay lại danh sách</router-link>
+        </div>
     </div>
 </template>
 
 <style scoped>
 .article-content { line-height: 1.8; font-size: 1.1rem; color: #333; }
-.article-content img { max-width: 100%; height: auto; }
+.article-content :deep(img) { max-width: 100%; height: auto; border-radius: 8px; margin: 1rem 0; }
+.article-content :deep(h4) { margin-top: 1.5rem; font-weight: bold; }
 .cursor-pointer { cursor: pointer; }
 .animate-fade { animation: fadeIn 0.3s ease-in-out; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }

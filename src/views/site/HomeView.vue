@@ -2,13 +2,11 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '@/services/api';
-import { useAuthStore } from '@/store/auth';
-import Swal from 'sweetalert2';
-
-// [QUAN TRỌNG] Đã xóa import { Carousel } from 'bootstrap' để tránh xung đột gây đơ trang.
+// [MỚI] Import cartStore để xử lý luồng thêm giỏ hàng thông minh
+import { useCartStore } from '@/store/cart'; 
 
 const router = useRouter();
-const authStore = useAuthStore();
+const cartStore = useCartStore();
 
 // Cấu hình Banner Carousel
 const banners = ref([
@@ -24,10 +22,7 @@ const newProducts = ref([]);
 const isLoading = ref(false);
 
 onMounted(async () => {
-    // [ĐÃ SỬA] Xóa đoạn code new Carousel(...) thủ công. 
-    // Bootstrap sẽ tự chạy nhờ thuộc tính data-bs-ride trong HTML.
-
-    // Tải dữ liệu sản phẩm (Logic cũ giữ nguyên)
+    // Tải dữ liệu sản phẩm 
     isLoading.value = true;
     try {
         const [resDiscount, resBest, resNew] = await Promise.all([
@@ -46,53 +41,30 @@ onMounted(async () => {
     }
 });
 
-// Hàm xử lý ảnh chuẩn xác
+// Hàm xử lý ảnh chuẩn xác (Giữ nguyên)
 const getImageUrl = (imageName) => {
     if (!imageName) return 'https://placehold.co/300x300?text=No+Image';
     if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
     
     let cleanName = imageName;
     if (cleanName.startsWith('/')) cleanName = cleanName.substring(1);
-    if (cleanName.startsWith('imgs/')) cleanName = cleanName.substring(5);
     
-    return `http://localhost:8080/imgs/${cleanName}`;
+    // Logic chung: Nếu có chữ imgs/ rồi thì thôi, chưa có thì thêm vào
+    const baseUrl = 'http://localhost:8080';
+    if (cleanName.startsWith('imgs/')) return `${baseUrl}/${cleanName}`;
+    return `${baseUrl}/imgs/${cleanName}`;
 };
 
 const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
 
-const addToCart = async (productId) => {
-    if (!authStore.isAuthenticated) {
-        Swal.fire({
-            title: 'Yêu cầu đăng nhập',
-            text: 'Bạn cần đăng nhập để mua hàng!',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Đăng nhập ngay',
-            cancelButtonText: 'Để sau'
-        }).then((result) => {
-            if (result.isConfirmed) {
-                router.push('/login');
-            }
-        });
-        return;
-    }
-
+// [SỬA ĐỔI QUAN TRỌNG]: Đổi tham số từ productId thành cả object product
+const addToCart = async (product) => {
+    // Gọi hàm từ Store, Store sẽ tự quyết định lưu DB hay lưu LocalStorage
+    // Mặc định thêm 1kg
     try {
-        await apiClient.post('/cart/add', { productId, quantity: 1 });
-        if (window.Toast) {
-            window.Toast.fire({ icon: 'success', title: 'Đã thêm vào giỏ hàng!' });
-        } else {
-            Swal.fire({
-                title: 'Thành công',
-                text: 'Đã thêm vào giỏ hàng',
-                icon: 'success',
-                timer: 1500,
-                showConfirmButton: false
-            });
-        }
+        await cartStore.addToCart(product, 1);
     } catch (err) {
         console.error(err);
-        Swal.fire('Lỗi', err.response?.data || 'Không thể thêm vào giỏ hàng', 'error');
     }
 };
 </script>
@@ -104,7 +76,8 @@ const addToCart = async (productId) => {
             <div id="homeBannerCarousel" 
                  class="carousel slide" 
                  data-bs-ride="carousel" 
-                 data-bs-interval="3000"> <div class="carousel-inner">
+                 data-bs-interval="3000"> 
+                 <div class="carousel-inner">
                     <div v-for="(bannerPath, index) in banners"
                          :key="index"
                          class="carousel-item"
@@ -150,7 +123,7 @@ const addToCart = async (productId) => {
                                         {{ formatPrice(p.originalPrice) }}
                                     </small>
                                     <div class="mt-auto d-flex justify-content-center gap-2 pt-3">
-                                        <button class="btn btn-outline-danger btn-sm" @click="addToCart(p.id)">
+                                        <button class="btn btn-outline-danger btn-sm" @click="addToCart(p)">
                                             <i class="bi bi-cart-plus"></i> Chọn mua
                                         </button>
                                         <router-link :to="'/products/' + p.id" class="btn btn-secondary btn-sm">
@@ -173,7 +146,7 @@ const addToCart = async (productId) => {
                                     <h6 class="card-title text-truncate" :title="p.name">{{ p.name }}</h6>
                                     <p class="text-primary-fruit fw-bold fs-5">{{ formatPrice(p.price) }}</p>
                                     <div class="mt-auto d-flex justify-content-center gap-2 pt-3">
-                                        <button class="btn btn-primary btn-fruit btn-sm" @click="addToCart(p.id)">
+                                        <button class="btn btn-primary btn-fruit btn-sm" @click="addToCart(p)">
                                             <i class="bi bi-cart-plus"></i> Chọn mua
                                         </button>
                                         <router-link :to="'/products/' + p.id" class="btn btn-outline-secondary btn-sm">
@@ -197,7 +170,7 @@ const addToCart = async (productId) => {
                                     <h6 class="card-title text-truncate" :title="p.name">{{ p.name }}</h6>
                                     <p class="text-success fw-bold fs-5">{{ formatPrice(p.price) }}</p>
                                     <div class="mt-auto d-flex justify-content-center gap-2 pt-3">
-                                        <button class="btn btn-success btn-sm" @click="addToCart(p.id)">
+                                        <button class="btn btn-success btn-sm" @click="addToCart(p)">
                                             <i class="bi bi-cart-plus"></i> Chọn mua
                                         </button>
                                         <router-link :to="'/products/' + p.id" class="btn btn-outline-secondary btn-sm">
@@ -217,12 +190,12 @@ const addToCart = async (productId) => {
 <style scoped>
 /* CSS CHO BANNER FULL MÀN HÌNH */
 .banner-img {
-    height: 420px; /* Tăng chiều cao để cân đối với màn hình rộng */
+    height: 420px; 
     width: 100%;
-    object-fit: cover; /* Giúp ảnh không bị méo khi kéo giãn */
+    object-fit: cover; 
 }
 
-/* Responsive: Thu nhỏ banner khi xem trên điện thoại */
+/* Responsive */
 @media (max-width: 768px) {
     .banner-img {
         height: 250px;
