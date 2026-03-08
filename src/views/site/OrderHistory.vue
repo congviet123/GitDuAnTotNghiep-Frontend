@@ -14,14 +14,61 @@ const selectedOrder = ref({
 });
 const loading = ref(false);
 let pollingInterval = null; 
+let countdownInterval = null; 
 
 const shopBank = ref({
     bankId: '', accountNo: '', accountName: '' 
 });
 
+const currentNow = ref(new Date().getTime()); 
+
 // =======================================================================
-// 2. COMPUTED PROPERTIES (XỬ LÝ HIỂN THỊ)
+// 2. COMPUTED PROPERTIES & TIMER LOGIC
 // =======================================================================
+
+const startCountdownTimer = () => {
+    if (countdownInterval) clearInterval(countdownInterval);
+    countdownInterval = setInterval(() => {
+        currentNow.value = new Date().getTime();
+    }, 1000);
+};
+
+// [ĐÃ SỬA] - Hàm tính toán đếm ngược cực kỳ thông minh
+const getReturnTimeLeft = (order) => {
+    // Ưu tiên lấy ngày Giao hàng. Nếu đơn cũ bị null, lấy tạm Ngày đặt hàng để đếm
+    const baseDateString = order.deliveryDate || order.createDate;
+    
+    if (!baseDateString) return { expired: true, text: 'Hết hạn' };
+    
+    // Mốc bắt đầu + 24 tiếng
+    const baseDate = new Date(baseDateString).getTime();
+    const deadline = baseDate + (24 * 60 * 60 * 1000); 
+    const diff = deadline - currentNow.value;
+
+    // Nếu thời gian chênh lệch <= 0 nghĩa là đã quá 24h
+    if (diff <= 0) return { expired: true, text: 'Hết hạn đổi trả' };
+
+    // Tính toán Giờ, Phút, Giây còn lại
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    // Format lại cho đẹp (Ví dụ: 09h 05m 02s)
+    const formattedHours = hours.toString().padStart(2, '0');
+    const formattedMinutes = minutes.toString().padStart(2, '0');
+    const formattedSeconds = seconds.toString().padStart(2, '0');
+
+    return { 
+        expired: false, 
+        text: `Còn ${formattedHours}h ${formattedMinutes}m ${formattedSeconds}s` 
+    };
+};
+
+const canReturnOrder = (order) => {
+    if (order.status !== 'DELIVERED') return false; // Chỉ đơn đã giao mới được trả
+    const returnTime = getReturnTimeLeft(order);
+    return !returnTime.expired; // Trả về true nếu chưa hết hạn
+};
 
 const qrCodeUrl = computed(() => {
     if (!selectedOrder.value || !selectedOrder.value.id || !shopBank.value.bankId) return '';
@@ -40,44 +87,24 @@ const parsedShippingInfo = computed(() => {
     return { name, phone, address };
 });
 
-// [FIXED] Tách thông tin hoàn trả (Hỗ trợ cả format cũ trong ảnh và format mới)
 const returnRequestInfo = computed(() => {
     const raw = selectedOrder.value.notes || '';
-
-    // Case 1: Format chuẩn mới (Code Backend mới nhất)
-    // VD: [Yêu cầu trả: Hàng lỗi | Bank: VCB-123 | KH: Ten-SDT]
     const regexNew = /\[Yêu cầu trả:\s*(.*?)\s*\|\s*Bank:\s*(.*?)\s*\|\s*KH:\s*(.*?)\]/;
     const matchNew = raw.match(regexNew);
     if (matchNew) {
-        return {
-            reason: matchNew[1],
-            bank: matchNew[2],
-            contact: matchNew[3],
-            originalString: matchNew[0]
-        };
+        return { reason: matchNew[1], bank: matchNew[2], contact: matchNew[3], originalString: matchNew[0] };
     }
-
-    // Case 2: Format cũ (Như trong ảnh bạn gửi)
-    // VD: | Yêu cầu trả: hàng bị dập [Hoàn tiền: VCB - 01234545456 - Công việt]
     const regexOld = /\|\s*Yêu cầu trả:\s*(.*?)\s*\[Hoàn tiền:\s*(.*?)\]/;
     const matchOld = raw.match(regexOld);
     if (matchOld) {
-        return {
-            reason: matchOld[1],
-            bank: matchOld[2],
-            contact: '', // Format cũ không có thông tin contact riêng
-            originalString: matchOld[0]
-        };
+        return { reason: matchOld[1], bank: matchOld[2], contact: '', originalString: matchOld[0] };
     }
-
     return null;
 });
 
-// [MỚI] Ghi chú hiển thị (Đã lọc bỏ thông tin hoàn trả để cho gọn)
 const displayNote = computed(() => {
     const raw = selectedOrder.value.notes || '';
     if (returnRequestInfo.value) {
-        // Xóa chuỗi hoàn trả khỏi ghi chú để không bị lặp lại
         return raw.replace(returnRequestInfo.value.originalString, '').trim();
     }
     return raw;
@@ -107,33 +134,105 @@ const fetchBankInfo = async () => {
 // 4. LOGIC NGHIỆP VỤ
 // =======================================================================
 
-const cancelOrder = async (orderId) => {
-    const { value: reason } = await Swal.fire({
-        title: 'Hủy đơn hàng?',
-        input: 'select',
-        inputOptions: {
-            'Đổi ý, không muốn mua nữa': 'Đổi ý, không muốn mua nữa',
-            'Tìm thấy nơi khác giá rẻ hơn': 'Tìm thấy nơi khác giá rẻ hơn',
-            'Muốn thay đổi địa chỉ/sđt nhận hàng': 'Muốn thay đổi địa chỉ/sđt nhận hàng',
-            'Muốn thay đổi sản phẩm trong đơn': 'Muốn thay đổi sản phẩm trong đơn',
-            'Thủ tục thanh toán quá rắc rối': 'Thủ tục thanh toán quá rắc rối',
-            'Thời gian giao hàng quá lâu': 'Thời gian giao hàng quá lâu',
-            'Khác': 'Lý do khác'
-        },
-        inputPlaceholder: 'Chọn lý do hủy...',
-        showCancelButton: true,
-        confirmButtonText: 'Xác nhận hủy',
-        confirmButtonColor: '#d33',
-        inputValidator: (value) => { if (!value) return 'Bạn cần chọn một lý do!'; }
-    });
+const cancelOrder = async (order) => {
+    if (!isTransfer(order.paymentMethod)) {
+        const { value: reason } = await Swal.fire({
+            title: 'Hủy đơn hàng?',
+            input: 'select',
+            inputOptions: {
+                'Đổi ý, không muốn mua nữa': 'Đổi ý, không muốn mua nữa',
+                'Tìm thấy nơi khác giá rẻ hơn': 'Tìm thấy nơi khác giá rẻ hơn',
+                'Muốn thay đổi địa chỉ/sđt nhận hàng': 'Muốn thay đổi địa chỉ/sđt nhận hàng',
+                'Muốn thay đổi sản phẩm trong đơn': 'Muốn thay đổi sản phẩm trong đơn',
+                'Thủ tục thanh toán quá rắc rối': 'Thủ tục thanh toán quá rắc rối',
+                'Thời gian giao hàng quá lâu': 'Thời gian giao hàng quá lâu',
+                'Khác': 'Lý do khác'
+            },
+            inputPlaceholder: 'Chọn lý do hủy...',
+            showCancelButton: true,
+            confirmButtonText: 'Xác nhận hủy',
+            confirmButtonColor: '#d33',
+            inputValidator: (value) => { if (!value) return 'Bạn cần chọn một lý do!'; }
+        });
 
-    if (reason) {
-        try {
-            await apiClient.put(`/orders/${orderId}/cancel`, { reason });
-            await Swal.fire('Thành công', 'Đơn hàng đã được hủy.', 'success');
-            fetchOrderHistory();
-        } catch (e) {
-            Swal.fire('Lỗi', e.response?.data || 'Lỗi hủy đơn.', 'error');
+        if (reason) {
+            try {
+                await apiClient.put(`/orders/${order.id}/cancel`, { reason });
+                await Swal.fire('Thành công', 'Đơn hàng đã được hủy.', 'success');
+                fetchOrderHistory();
+            } catch (e) {
+                Swal.fire('Lỗi', e.response?.data || 'Lỗi hủy đơn.', 'error');
+            }
+        }
+    } 
+    else {
+        const { value: formValues } = await Swal.fire({
+            title: 'HỦY ĐƠN & HOÀN TIỀN',
+            width: '600px',
+            html: `
+                <div class="text-start fs-6" style="font-family: Arial, sans-serif;">
+                    <div class="alert alert-warning small mb-3 border-warning rounded">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> Đơn hàng này đã được thanh toán. Vui lòng cung cấp thông tin tài khoản ngân hàng để chúng tôi hoàn tiền lại cho bạn.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold text-dark">Lý do hủy đơn <span class="text-danger">*</span></label>
+                        <select id="swal-cancel-reason" class="form-select mb-2">
+                            <option value="" disabled selected>-- Chọn lý do hủy --</option>
+                            <option value="Đổi ý, không muốn mua nữa">Đổi ý, không muốn mua nữa</option>
+                            <option value="Tìm thấy nơi khác giá rẻ hơn">Tìm thấy nơi khác giá rẻ hơn</option>
+                            <option value="Muốn thay đổi địa chỉ/sđt nhận hàng">Muốn thay đổi địa chỉ/sđt nhận hàng</option>
+                            <option value="Muốn thay đổi sản phẩm trong đơn">Muốn thay đổi sản phẩm trong đơn</option>
+                            <option value="Lý do khác">Lý do khác</option>
+                        </select>
+                    </div>
+                    <div class="mb-3 border p-3 rounded bg-light">
+                        <h6 class="text-primary fw-bold mb-3"><i class="bi bi-credit-card-2-front me-1"></i> Thông tin nhận tiền hoàn</h6>
+                        <div class="row g-3 mb-3">
+                            <div class="col-12">
+                                <label class="small text-muted mb-1">Tên Ngân hàng <span class="text-danger">*</span></label>
+                                <input id="swal-cancel-bankName" class="form-control" placeholder="VD: Vietcombank, MBBank...">
+                            </div>
+                            <div class="col-6">
+                                <label class="small text-muted mb-1">Số tài khoản <span class="text-danger">*</span></label>
+                                <input id="swal-cancel-accNo" class="form-control" placeholder="Nhập số tài khoản">
+                            </div>
+                            <div class="col-6">
+                                <label class="small text-muted mb-1">Tên chủ TK <span class="text-danger">*</span></label>
+                                <input id="swal-cancel-accName" class="form-control text-uppercase" placeholder="VD: NGUYEN VAN A">
+                            </div>
+                        </div>
+                        <div class="bg-white p-2 rounded border border-dashed">
+                            <label class="small fw-bold text-dark d-block mb-1"><i class="bi bi-qr-code"></i> Ảnh QR Ngân hàng (Tùy chọn)</label>
+                            <input type="file" id="swal-cancel-qrImage" class="form-control form-control-sm" accept="image/*">
+                        </div>
+                    </div>
+                </div>
+            `,
+            showCancelButton: true, confirmButtonText: '<i class="bi bi-send-fill me-1"></i> Xác nhận', confirmButtonColor: '#d33',
+            preConfirm: () => {
+                const reason = document.getElementById('swal-cancel-reason').value;
+                const bankName = document.getElementById('swal-cancel-bankName').value;
+                const accNo = document.getElementById('swal-cancel-accNo').value;
+                const accName = document.getElementById('swal-cancel-accName').value;
+                const qrFile = document.getElementById('swal-cancel-qrImage').files[0];
+
+                if (!reason || !bankName || !accNo || !accName) { Swal.showValidationMessage('Vui lòng điền đủ thông tin!'); return false; }
+                return { reason, bankName, accNo, accName, qrFile };
+            }
+        });
+
+        if (formValues) {
+            try {
+                Swal.fire({ title: 'Đang xử lý...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+                const formData = new FormData();
+                formData.append('reason', formValues.reason); formData.append('bankName', formValues.bankName);
+                formData.append('accNo', formValues.accNo); formData.append('accName', formValues.accName);
+                if (formValues.qrFile) formData.append('qrFile', formValues.qrFile);
+
+                await apiClient.post(`/orders/${order.id}/cancel-paid`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+                await Swal.fire('Thành công', 'Yêu cầu hủy đơn đã được gửi.', 'success');
+                fetchOrderHistory();
+            } catch (e) { Swal.fire('Lỗi', e.response?.data || 'Lỗi hủy đơn', 'error'); }
         }
     }
 };
@@ -145,26 +244,24 @@ const requestReturn = async (order) => {
         const admins = res.data;
         if (admins && admins.length > 0) {
             adminOptions = admins.map(a => `<option value="${a.email}">${a.fullname} (${a.email})</option>`).join('');
-        } else {
-            adminOptions = `<option value="admin@traicaystore.com">Admin Mặc định</option>`;
-        }
+        } else { adminOptions = `<option value="admin@traicaystore.com">Admin Mặc định</option>`; }
     } catch (e) { adminOptions = `<option value="admin@traicaystore.com">Admin Store</option>`; }
 
     let defName = '', defPhone = '', defEmail = '';
     try {
         const userRes = await apiClient.get('/client/profile'); 
-        defName = userRes.data.fullname || '';
-        defPhone = userRes.data.phone || '';
-        defEmail = userRes.data.email || '';
+        defName = userRes.data.fullname || ''; defPhone = userRes.data.phone || ''; defEmail = userRes.data.email || '';
     } catch (e) { defName = order.accountFullname || ''; }
 
     const shopName = "TRÁI CÂY NHẬP KHẨU STORE";
 
     const { value: formValues } = await Swal.fire({
-        title: 'YÊU CẦU HOÀN TRẢ ĐƠN HÀNG',
-        width: '700px',
+        title: 'YÊU CẦU HOÀN TRẢ ĐƠN HÀNG', width: '700px',
         html: `
             <div class="text-start fs-6" style="font-family: Arial, sans-serif;">
+                <div class="alert alert-danger small mb-3">
+                    <i class="bi bi-clock-history"></i> Bạn chỉ có <strong>24 giờ</strong> tính từ lúc nhận hàng để gửi yêu cầu hoàn trả.
+                </div>
                 <div class="mb-3 bg-light p-2 rounded border">
                     <h6 class="text-primary fw-bold mb-1"><i class="bi bi-shop me-1"></i> Gửi đến (Shop)</h6>
                     <div class="small mb-2"><strong>Shop:</strong> ${shopName}</div>
@@ -174,14 +271,8 @@ const requestReturn = async (order) => {
                 <div class="mb-3 border p-3 rounded position-relative">
                     <h6 class="text-primary fw-bold mb-2"><i class="bi bi-person-circle me-1"></i> Thông tin khách hàng yêu cầu hoàn đơn</h6>
                     <div class="mb-2">
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="radio" name="infoOption" id="optDefault" value="default" checked>
-                            <label class="form-check-label" for="optDefault">Thông tin mặc định (TK)</label>
-                        </div>
-                        <div class="form-check form-check-inline">
-                            <input class="form-check-input" type="radio" name="infoOption" id="optCustom" value="custom">
-                            <label class="form-check-label" for="optCustom">Nhập thông tin mới</label>
-                        </div>
+                        <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="infoOption" id="optDefault" value="default" checked><label class="form-check-label" for="optDefault">Thông tin mặc định (TK)</label></div>
+                        <div class="form-check form-check-inline"><input class="form-check-input" type="radio" name="infoOption" id="optCustom" value="custom"><label class="form-check-label" for="optCustom">Nhập thông tin mới</label></div>
                     </div>
                     <div class="row g-2" id="infoInputs">
                         <div class="col-6"><label class="small text-muted">Họ tên</label><input id="swal-name" class="form-control form-control-sm" value="${defName}" readonly></div>
@@ -199,7 +290,6 @@ const requestReturn = async (order) => {
                     <div class="bg-light p-2 rounded border border-dashed">
                         <label class="small fw-bold text-dark d-block mb-1"><i class="bi bi-qr-code"></i> Ảnh QR Ngân hàng (Tùy chọn)</label>
                         <input type="file" id="swal-qrImage" class="form-control form-control-sm" accept="image/*">
-                        <small class="text-muted fst-italic" style="font-size: 0.85em;">* Vui lòng chọn ảnh QR của bạn để được hoàn tiền nhanh hơn (có thể bỏ qua).</small>
                     </div>
                 </div>
                 <div class="mb-3">
@@ -211,14 +301,9 @@ const requestReturn = async (order) => {
             </div>
         `,
         showCancelButton: true, confirmButtonText: '<i class="bi bi-send-fill me-1"></i> Gửi yêu cầu', cancelButtonText: 'Hủy', focusConfirm: false,
-        
         didOpen: () => {
-            const optDefault = document.getElementById('optDefault');
-            const optCustom = document.getElementById('optCustom');
-            const nameInput = document.getElementById('swal-name');
-            const phoneInput = document.getElementById('swal-phone');
-            const emailInput = document.getElementById('swal-email');
-
+            const optDefault = document.getElementById('optDefault'); const optCustom = document.getElementById('optCustom');
+            const nameInput = document.getElementById('swal-name'); const phoneInput = document.getElementById('swal-phone'); const emailInput = document.getElementById('swal-email');
             const toggleInputs = (isCustom) => {
                 nameInput.readOnly = !isCustom; phoneInput.readOnly = !isCustom; emailInput.readOnly = !isCustom;
                 if (!isCustom) { 
@@ -227,48 +312,35 @@ const requestReturn = async (order) => {
                 } else {
                     nameInput.value = ''; phoneInput.value = ''; emailInput.value = '';
                     nameInput.classList.add('bg-white'); phoneInput.classList.add('bg-white'); emailInput.classList.add('bg-white');
-                    nameInput.focus();
                 }
             };
-            optDefault.addEventListener('change', () => toggleInputs(false));
-            optCustom.addEventListener('change', () => toggleInputs(true));
+            optDefault.addEventListener('change', () => toggleInputs(false)); optCustom.addEventListener('change', () => toggleInputs(true));
             toggleInputs(false); 
         },
-        
         preConfirm: () => {
             return {
-                adminEmail: document.getElementById('swal-adminEmail').value,
-                senderName: document.getElementById('swal-name').value,
-                senderPhone: document.getElementById('swal-phone').value,
-                senderEmail: document.getElementById('swal-email').value,
-                bankName: document.getElementById('swal-bankName').value,
-                accNo: document.getElementById('swal-accNo').value,
-                accName: document.getElementById('swal-accName').value,
-                qrFile: document.getElementById('swal-qrImage').files[0],
-                reason: document.getElementById('swal-reason').value,
-                files: document.getElementById('swal-images').files
+                adminEmail: document.getElementById('swal-adminEmail').value, senderName: document.getElementById('swal-name').value, senderPhone: document.getElementById('swal-phone').value,
+                senderEmail: document.getElementById('swal-email').value, bankName: document.getElementById('swal-bankName').value, accNo: document.getElementById('swal-accNo').value,
+                accName: document.getElementById('swal-accName').value, qrFile: document.getElementById('swal-qrImage').files[0],
+                reason: document.getElementById('swal-reason').value, files: document.getElementById('swal-images').files
             };
         }
     });
 
     if (formValues) {
-        if (!formValues.senderName || !formValues.senderPhone || !formValues.senderEmail) { Swal.fire('Thiếu thông tin', 'Vui lòng nhập đầy đủ thông tin liên hệ!', 'warning'); return; }
-        if (!formValues.bankName || !formValues.accNo || !formValues.accName || !formValues.reason) { Swal.fire('Thiếu thông tin', 'Vui lòng nhập thông tin ngân hàng và lý do!', 'warning'); return; }
-
+        if (!formValues.senderName || !formValues.senderPhone || !formValues.senderEmail || !formValues.bankName || !formValues.accNo || !formValues.accName || !formValues.reason) { Swal.fire('Lỗi', 'Vui lòng điền đủ thông tin!', 'warning'); return; }
         try {
-            Swal.fire({ title: 'Đang xử lý...', text: 'Đang tải ảnh và gửi email chi tiết cho Admin', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
+            Swal.fire({ title: 'Đang xử lý...', allowOutsideClick: false, didOpen: () => { Swal.showLoading(); } });
             const formData = new FormData();
-            formData.append('senderName', formValues.senderName); formData.append('senderPhone', formValues.senderPhone);
-            formData.append('senderEmail', formValues.senderEmail); formData.append('adminEmail', formValues.adminEmail);
-            formData.append('reason', formValues.reason); formData.append('bankName', formValues.bankName);
-            formData.append('accNo', formValues.accNo); formData.append('accName', formValues.accName);
-            if (formValues.qrFile) formData.append('qrFile', formValues.qrFile);
-            if (formValues.files.length > 0) { for (let i = 0; i < formValues.files.length; i++) { formData.append('files', formValues.files[i]); } }
-
+            Object.keys(formValues).forEach(key => {
+                if (key === 'files') { Array.from(formValues[key]).forEach(f => formData.append('files', f)); }
+                else if (key === 'qrFile' && formValues[key]) { formData.append('qrFile', formValues[key]); }
+                else { formData.append(key, formValues[key]); }
+            });
             await apiClient.post(`/orders/${order.id}/return-request`, formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-            await Swal.fire('Thành công', 'Yêu cầu hoàn trả đã được gửi.', 'success');
+            await Swal.fire('Thành công', 'Đã gửi yêu cầu hoàn trả.', 'success');
             fetchOrderHistory();
-        } catch (e) { console.error(e); Swal.fire('Lỗi', e.response?.data || 'Không gửi được yêu cầu.', 'error'); }
+        } catch (e) { Swal.fire('Lỗi', e.response?.data || 'Không gửi được yêu cầu.', 'error'); }
     }
 };
 
@@ -290,7 +362,7 @@ const translateStatus = (status) => {
     const map = {
         'PENDING': 'Đang chờ xử lý', 'CONFIRMED': 'Đã xác nhận', 'PREPARING': 'Đang chuẩn bị hàng',
         'SHIPPING': 'Đang vận chuyển', 'SHIPPED': 'Đang giao hàng', 'DELIVERED': 'Giao thành công',
-        'COMPLETED': 'Hoàn tất', 'CANCELLED': 'Đã hủy', 'RETURN_REQUESTED': 'Yêu cầu hoàn trả',
+        'COMPLETED': 'Hoàn tất', 'CANCELLED': 'Yêu cầu hủy đơn hàng', 'RETURN_REQUESTED': 'Yêu cầu hoàn trả',
         'CANCELLED_REFUNDED': 'Đã hoàn tiền', 'PAID': 'Đã thanh toán', 'CANCEL_REQUESTED': 'Đang chờ xác nhận hủy'
     };
     return map[status] || status;
@@ -344,8 +416,16 @@ const openPaymentModal = () => {
     startPollingOrder(selectedOrder.value.id);
 };
 
-onBeforeUnmount(() => stopPolling());
-onMounted(() => { fetchOrderHistory(); fetchBankInfo(); });
+onBeforeUnmount(() => {
+    stopPolling();
+    if (countdownInterval) clearInterval(countdownInterval);
+});
+
+onMounted(() => { 
+    fetchOrderHistory(); 
+    fetchBankInfo(); 
+    startCountdownTimer(); // Bắt đầu đếm ngược
+});
 </script>
 
 <template>
@@ -370,6 +450,7 @@ onMounted(() => { fetchOrderHistory(); fetchBankInfo(); });
                             <th>Tổng tiền</th>
                             <th>Hình thức TT</th>
                             <th>Trạng thái</th>
+                            <th class="text-center">Thời gian đổi trả</th>
                             <th class="text-center">Thao tác</th>
                         </tr>
                     </thead>
@@ -381,10 +462,26 @@ onMounted(() => { fetchOrderHistory(); fetchBankInfo(); });
                             <td class="text-danger fw-bold">{{ formatPrice(order.totalAmount) }}</td>
                             <td><span class="badge border" :class="getPaymentClass(order)">{{ getPaymentMethodDisplay(order) }}</span></td>
                             <td><span class="badge rounded-pill px-3 py-2" :class="getStatusBadgeClass(order.status)">{{ translateStatus(order.status) }}</span></td>
+                            
+                            <td class="text-center">
+                                <span v-if="order.status === 'DELIVERED'">
+                                    <span v-if="getReturnTimeLeft(order).expired" class="text-danger fw-bold small">
+                                        <i class="bi bi-x-circle me-1"></i> Hết hạn đổi trả
+                                    </span>
+                                    <span v-else class="text-success fw-bold small" style="font-variant-numeric: tabular-nums;">
+                                        <i class="bi bi-clock-history me-1"></i> {{ getReturnTimeLeft(order).text }}
+                                    </span>
+                                </span>
+                                <span v-else class="text-muted small">-</span>
+                            </td>
+
                             <td class="text-center">
                                 <button class="btn btn-primary btn-sm me-2 fw-bold" @click="viewDetails(order.id)"><i class="bi bi-eye"></i> Chi tiết</button>
-                                <button v-if="['PENDING', 'CONFIRMED'].includes(order.status)" class="btn btn-warning btn-sm fw-bold me-2" @click="cancelOrder(order.id)">Hủy đơn</button>
-                                <button v-if="['DELIVERED', 'COMPLETED'].includes(order.status)" class="btn btn-outline-secondary btn-sm fw-bold me-2" @click="requestReturn(order)">Hoàn trả</button>
+                                
+                                <button v-if="['PENDING', 'CONFIRMED'].includes(order.status)" class="btn btn-warning btn-sm fw-bold me-2" @click="cancelOrder(order)">Hủy đơn</button>
+                                
+                                <button v-if="canReturnOrder(order)" class="btn btn-outline-secondary btn-sm fw-bold me-2" @click="requestReturn(order)">Hoàn trả</button>
+                                
                                 <button v-if="['COMPLETED', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(order.status)" class="btn btn-danger btn-sm fw-bold" @click="deleteOrder(order.id)" title="Xóa lịch sử"><i class="bi bi-trash"></i></button>
                             </td>
                         </tr>

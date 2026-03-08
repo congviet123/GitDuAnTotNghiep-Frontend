@@ -2,14 +2,14 @@
 import { reactive, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router'; 
 import { useAuthStore } from '@/store/auth';
-import { useCartStore } from '@/store/cart'; // [MỚI] Thêm cart store
+import { useCartStore } from '@/store/cart'; 
 import apiClient from '@/services/api';
 import Swal from 'sweetalert2';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
-const cartStore = useCartStore(); // [MỚI] Khởi tạo cart store
+const cartStore = useCartStore(); 
 const form = reactive({ username: '', password: '' });
 
 const Toast = Swal.mixin({
@@ -34,14 +34,13 @@ const handleLogin = async () => {
         const userData = res.data; 
         authStore.login(userData, null); 
         
-        // [QUAN TRỌNG] Đồng bộ giỏ hàng từ LocalStorage lên DB ngay sau khi đăng nhập thành công
+        // Đồng bộ giỏ hàng từ LocalStorage lên DB ngay sau khi đăng nhập thành công
         await cartStore.syncLocalCartToDatabase();
 
         Toast.fire({ icon: 'success', title: 'Đăng nhập thành công!' });
         redirectUser();
     } catch (err) {
         console.error(err);
-        // Lấy thông báo lỗi từ Backend (Đã bao gồm thông báo "Tài khoản bị khóa")
         Swal.fire({
             icon: 'error',
             title: 'Đăng nhập thất bại',
@@ -52,13 +51,12 @@ const handleLogin = async () => {
 
 // 2. Chuyển hướng sang Google Login
 const loginWithGoogle = () => {
-    // Backend đã cấu hình prompt=select_account nên Google sẽ luôn hỏi chọn tài khoản
     window.location.href = 'http://localhost:8080/oauth2/authorization/google';
 };
 
 // 3. Xử lý kết quả trả về từ Google (Qua URL Query Param)
 const checkGoogleLogin = async () => {
-    // --- TRƯỜNG HỢP THÀNH CÔNG ---
+    // --- TRƯỜNG HỢP 1: TÀI KHOẢN ĐÃ CÓ SẴN (THÀNH CÔNG) ---
     if (route.query.google_success === 'true') {
         try {
             Swal.fire({
@@ -72,13 +70,12 @@ const checkGoogleLogin = async () => {
             if (response.data) {
                 authStore.login(response.data);
                 
-                // [QUAN TRỌNG] Đồng bộ giỏ hàng sau khi login Google
+                // Đồng bộ giỏ hàng sau khi login Google
                 await cartStore.syncLocalCartToDatabase();
 
                 Swal.close(); 
                 await Toast.fire({ icon: 'success', title: 'Đăng nhập Google thành công!' });
                 
-                // Xóa query param để URL sạch đẹp
                 router.replace({ query: null });
                 redirectUser();
             }
@@ -87,21 +84,48 @@ const checkGoogleLogin = async () => {
         }
     }
     
-    // --- TRƯỜNG HỢP THẤT BẠI ---
+    // --- TRƯỜNG HỢP 2: CÓ LỖI HOẶC CHƯA ĐĂNG KÝ ---
     else if (route.query.google_error) {
         const errorType = route.query.google_error;
+        const tempToken = route.query.tempToken; // Lấy token từ URL
         
+        // Xóa query param trên URL cho sạch đẹp ngay lập tức
+        router.replace({ query: null });
+        
+        // [ĐÃ SỬA] Xử lý tài khoản chưa đăng ký
         if (errorType === 'unregistered') {
             Swal.fire({
                 icon: 'warning',
                 title: 'Chưa đăng ký',
-                text: 'Email Google này chưa có trong hệ thống. Vui lòng đăng ký tài khoản trước!',
+                text: 'Email Google này chưa có trong hệ thống. Bạn có muốn tạo tài khoản mới bằng Email này không?',
                 showCancelButton: true,
                 confirmButtonText: 'Đăng ký ngay',
                 cancelButtonText: 'Đóng'
-            }).then((result) => {
+            }).then(async (result) => {
+                // Nếu người dùng bấm "Đăng ký ngay"
                 if (result.isConfirmed) {
-                    router.push('/register');
+                    try {
+                        Swal.fire({
+                            title: 'Đang tạo tài khoản...',
+                            allowOutsideClick: false,
+                            didOpen: () => { Swal.showLoading(); }
+                        });
+
+                        // Gọi API tạo tài khoản tự động
+                        const res = await apiClient.post('/auth/register-google', { token: tempToken });
+                        
+                        // Backend trả về User luôn -> Tiến hành đăng nhập
+                        authStore.login(res.data);
+                        await cartStore.syncLocalCartToDatabase();
+
+                        Swal.close();
+                        Toast.fire({ icon: 'success', title: 'Khởi tạo tài khoản & Đăng nhập thành công!' });
+                        
+                        redirectUser();
+                    } catch (err) {
+                        console.error(err);
+                        Swal.fire('Lỗi', err.response?.data || 'Đăng ký tự động thất bại. Vui lòng thử lại sau.', 'error');
+                    }
                 }
             });
         } 
@@ -116,20 +140,16 @@ const checkGoogleLogin = async () => {
         else {
             Swal.fire('Lỗi đăng nhập', 'Không thể đăng nhập bằng Google.', 'error');
         }
-        
-        // Xóa query param trên URL
-        router.replace({ query: null });
     }
 };
 
 // Hàm điều hướng người dùng dựa theo Role
 const redirectUser = () => {
     const roleName = authStore.user?.role?.name;
-    // Hỗ trợ cả 2 tên role (đề phòng DB lưu khác nhau)
     if (roleName === 'ADMIN' || roleName === 'ROLE_ADMIN' || roleName === 'ROLE_STAFF') {
         router.push('/admin/dashboard');
     } else if (roleName === 'ROLE_SHIPPER') {
-        router.push('/shipper/dashboard'); // Ví dụ trang shipper
+        router.push('/shipper/dashboard'); 
     } else {
         router.push('/');
     }

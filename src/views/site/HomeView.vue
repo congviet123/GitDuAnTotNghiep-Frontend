@@ -41,7 +41,7 @@ onMounted(async () => {
     }
 });
 
-// Hàm xử lý ảnh chuẩn xác (Giữ nguyên)
+// Hàm xử lý ảnh chuẩn xác 
 const getImageUrl = (imageName) => {
     if (!imageName) return 'https://placehold.co/300x300?text=No+Image';
     if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
@@ -57,7 +57,7 @@ const getImageUrl = (imageName) => {
 
 const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
 
-// [SỬA ĐỔI QUAN TRỌNG]: Đổi tham số từ productId thành cả object product
+// Đổi tham số từ productId thành cả object product
 const addToCart = async (product) => {
     // Gọi hàm từ Store, Store sẽ tự quyết định lưu DB hay lưu LocalStorage
     // Mặc định thêm 1kg
