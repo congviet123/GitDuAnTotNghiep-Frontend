@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, reactive, watch } from 'vue';
+import { ref, onMounted, reactive, watch, computed } from 'vue';
 import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
@@ -10,12 +10,13 @@ const categories = ref([]);
 const isEdit = ref(false);
 const loading = ref(false);
 const selectedFile = ref(null);
-const searchResultLabel = ref(''); // [MỚI] Biến lưu dòng thông báo kết quả tìm kiếm
+const searchResultLabel = ref(''); 
 
-// Cấu hình phân trang (Lấy nhiều để hiện hết)
+// [MỚI] Biến quản lý Tab đang Active (mặc định là 'active' - Đang kinh doanh)
+const activeTab = ref('active'); 
+
 const pageSize = ref(1000); 
 
-// Bộ lọc
 const filters = reactive({
     keyword: '',
     categoryId: '',
@@ -23,11 +24,10 @@ const filters = reactive({
     maxPrice: null,
     minQty: null,
     maxQty: null,
-    minDiscount: null, // [MỚI] Thêm trường lọc giảm giá tối thiểu
-    maxDiscount: null  // [MỚI] Thêm trường lọc giảm giá tối đa
+    minDiscount: null, 
+    maxDiscount: null  
 });
 
-// Form dữ liệu
 const form = reactive({
     id: null, 
     name: '', 
@@ -59,7 +59,6 @@ const formatDate = (dateString) => {
     return new Date(dateString).toLocaleDateString('vi-VN');
 };
 
-// Chuyển đổi ngày từ API (ISO) sang format input (yyyy-mm-dd)
 const formatForInput = (dateString) => {
     if (!dateString) return '';
     return new Date(dateString).toISOString().split('T')[0];
@@ -76,6 +75,28 @@ watch(
     }
 );
 
+// --- LOGIC PHÂN CHIA TAB SẢN PHẨM ---
+// Sản phẩm Đang kinh doanh (Phải có Giá niêm yết > 0)
+const activeProducts = computed(() => {
+    return products.value.filter(p => p.originalPrice > 0);
+});
+
+// Sản phẩm Bản Nháp / Chưa thiết lập giá (Giá niêm yết = 0 hoặc null)
+const draftProducts = computed(() => {
+    return products.value.filter(p => !p.originalPrice || p.originalPrice <= 0);
+});
+
+// Lấy danh sách sản phẩm hiển thị dựa vào Tab đang chọn
+const displayedProducts = computed(() => {
+    if (activeTab.value === 'active') return activeProducts.value;
+    return draftProducts.value;
+});
+
+// Đổi Tab
+const setTab = (tabName) => {
+    activeTab.value = tabName;
+};
+
 // --- METHODS ---
 
 const fetchData = async (showWarning = true) => {
@@ -89,8 +110,8 @@ const fetchData = async (showWarning = true) => {
             maxPrice: filters.maxPrice || null,
             minQty: filters.minQty || null,
             maxQty: filters.maxQty || null,
-            minDiscount: filters.minDiscount || null, // [MỚI] Gửi tham số giảm giá lên server
-            maxDiscount: filters.maxDiscount || null  // [MỚI] Gửi tham số giảm giá lên server
+            minDiscount: filters.minDiscount || null, 
+            maxDiscount: filters.maxDiscount || null  
         };
 
         const [resProducts, resCategories] = await Promise.all([
@@ -105,7 +126,7 @@ const fetchData = async (showWarning = true) => {
         }
         categories.value = resCategories.data;
         
-        if (showWarning) checkLowStock(products.value);
+        if (showWarning) checkLowStock(activeProducts.value); // Chỉ check cảnh báo đối với hàng có giá
 
     } catch (err) {
         console.error(err);
@@ -120,14 +141,12 @@ const checkLowStock = (list) => {
     if (lowStockItems.length > 0) {
         window.Toast.fire({
             icon: 'warning',
-            title: `Cảnh báo: Có ${lowStockItems.length} sản phẩm sắp hết hàng (< 5kg)!`
+            title: `Cảnh báo: Có ${lowStockItems.length} sản phẩm đang bán sắp hết hàng (< 5kg)!`
         });
     }
 };
 
-// [MỚI] Logic Tìm kiếm: Tạo thông báo, Gọi API, Xóa input
 const searchProducts = async () => {
-    // 1. Tạo chuỗi thông báo kết quả dựa trên các bộ lọc hiện tại
     const parts = [];
     if (filters.keyword) parts.push(`Tên: "${filters.keyword}"`);
     if (filters.categoryId) {
@@ -150,10 +169,8 @@ const searchProducts = async () => {
         searchResultLabel.value = ''; 
     }
 
-    // 2. Gọi API để lấy dữ liệu mới
     await fetchData(false);
     
-    // 3. Xóa trắng các ô nhập liệu sau khi tìm kiếm xong
     filters.keyword = '';
     filters.categoryId = '';
     filters.minPrice = null;
@@ -165,7 +182,7 @@ const searchProducts = async () => {
 };
 
 const resetFilters = () => {
-    searchResultLabel.value = ''; // [MỚI] Xóa dòng thông báo kết quả
+    searchResultLabel.value = ''; 
     Object.assign(filters, { 
         keyword: '', categoryId: '', 
         minPrice: null, maxPrice: null, 
@@ -349,13 +366,31 @@ onMounted(() => fetchData(true));
         </div>
     </div>
 
-    <div class="d-flex justify-content-between align-items-center mb-3">
-      <h2 class="fs-5 text-muted">Tổng số sản phẩm: <span class="fw-bold text-dark">{{ products.length }}</span></h2>
-      <button class="btn btn-success px-4 fw-bold shadow-sm" @click="openModal()"><i class="bi bi-plus-lg me-1"></i> Nhập hàng</button>
+    <div class="d-flex justify-content-between align-items-end mb-3 border-bottom pb-2">
+      <ul class="nav nav-pills">
+        <li class="nav-item">
+          <a class="nav-link fw-bold pointer-cursor" 
+             :class="{ 'active': activeTab === 'active' }" 
+             @click.prevent="setTab('active')" style="cursor: pointer;">
+             <i class="bi bi-shop"></i> Sản phẩm đang Kinh Doanh
+             <span class="badge bg-light text-primary ms-1 rounded-pill">{{ activeProducts.length }}</span>
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link fw-bold pointer-cursor position-relative" 
+             :class="{ 'active': activeTab === 'draft' }" 
+             @click.prevent="setTab('draft')" style="cursor: pointer;">
+             <i class="bi bi-journal-text"></i> Sản phẩm (Chưa có giá bán)
+             <span class="badge bg-danger ms-1 rounded-pill">{{ draftProducts.length }}</span>
+          </a>
+        </li>
+      </ul>
+      <button class="btn btn-success px-4 fw-bold shadow-sm" @click="openModal()"><i class="bi bi-plus-lg me-1"></i> Thêm sản phẩm</button>
     </div>
 
     <div v-if="loading" class="text-center py-5"><div class="spinner-border text-primary"></div></div>
-    <div v-else class="table-responsive shadow-sm rounded border bg-white" style="max-height: 70vh; overflow-y: auto;">
+    
+    <div v-else class="table-responsive shadow-sm rounded border bg-white" style="max-height: 65vh; overflow-y: auto;">
       <table class="table table-hover align-middle mb-0">
         <thead class="table-dark sticky-top">
           <tr>
@@ -371,7 +406,7 @@ onMounted(() => fetchData(true));
           </tr>
         </thead>
         <tbody>
-          <tr v-for="p in products" :key="p.id">
+          <tr v-for="p in displayedProducts" :key="p.id">
             <td class="ps-3 fw-bold">#{{ p.id }}</td>
             <td><img :src="getImageUrl(p.image)" width="50" height="50" class="img-thumbnail object-fit-contain bg-light"></td>
             <td>
@@ -379,10 +414,13 @@ onMounted(() => fetchData(true));
                 <small class="text-muted">{{ p.category?.name }}</small>
             </td>
             <td>
-                <div v-if="p.discount > 0" class="text-decoration-line-through text-muted small">
-                    {{ formatPrice(p.originalPrice) }}
+                <div v-if="p.originalPrice > 0">
+                    <div v-if="p.discount > 0" class="text-decoration-line-through text-muted small">
+                        {{ formatPrice(p.originalPrice) }}
+                    </div>
+                    <div class="text-danger fw-bold">{{ formatPrice(p.price) }}</div>
                 </div>
-                <div class="text-danger fw-bold">{{ formatPrice(p.price) }}</div>
+                <div v-else class="text-danger fst-italic fw-bold small"><i class="bi bi-exclamation-triangle-fill me-1"></i>Chưa cấu hình</div>
             </td>
             <td>
                 <span v-if="p.discount > 0" class="badge bg-danger">-{{ p.discount }}%</span>
@@ -398,9 +436,16 @@ onMounted(() => fetchData(true));
                <div v-if="p.isLiquidation" class="badge bg-warning text-dark mt-1">Thanh lý</div>
             </td>
             <td class="text-center">
-              <button class="btn btn-outline-primary btn-sm me-2" @click="openModal(p.id)"><i class="bi bi-pencil-square"></i></button>
+              <button class="btn btn-outline-primary btn-sm me-2" @click="openModal(p.id)" title="Thiết lập giá & Thông tin"><i class="bi bi-pencil-square"></i></button>
               <button class="btn btn-outline-danger btn-sm" @click="deleteProduct(p)"><i class="bi bi-trash"></i></button>
             </td>
+          </tr>
+          
+          <tr v-if="displayedProducts.length === 0">
+              <td colspan="9" class="text-center py-5 text-muted fst-italic">
+                 <i class="bi bi-box fs-3 d-block mb-2"></i>
+                 Không có sản phẩm nào trong mục này.
+              </td>
           </tr>
         </tbody>
       </table>
@@ -410,7 +455,7 @@ onMounted(() => fetchData(true));
       <div class="modal-dialog modal-xl modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
           <div class="modal-header bg-primary text-white">
-            <h5 class="modal-title fw-bold">{{ isEdit ? 'Cập nhật kho' : 'Nhập hàng mới' }}</h5>
+            <h5 class="modal-title fw-bold">{{ isEdit ? 'Cập nhật sản phẩm' : 'Nhập hàng mới' }}</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body p-4">
@@ -423,7 +468,7 @@ onMounted(() => fetchData(true));
                       </div>
                       
                       <div class="row bg-light p-2 rounded mb-3 border mx-0">
-                          <div class="col-12 mb-2 text-primary fw-bold small text-uppercase">Quản lý nhập kho & Giá</div>
+                          <div class="col-12 mb-2 text-primary fw-bold small text-uppercase">Quản lý nhập kho & Giá vốn</div>
                           
                           <div class="col-md-6 mb-2">
                             <label class="form-label small fw-bold">Giá nhập (Vốn)</label>
@@ -441,12 +486,14 @@ onMounted(() => fetchData(true));
                           </div>
                       </div>
 
-                      <div class="row bg-light p-2 rounded mb-3 border mx-0">
-                          <div class="col-12 mb-2 text-success fw-bold small text-uppercase">Thiết lập giá bán</div>
+                      <div class="row bg-light p-2 rounded mb-3 border mx-0 position-relative">
+                          <div class="col-12 mb-2 text-success fw-bold small text-uppercase">
+                              <i class="bi bi-tag-fill me-1"></i>Thiết lập giá bán (Để hiển thị cho khách)
+                          </div>
                           
                           <div class="col-md-4 mb-2">
                             <label class="form-label small fw-bold">Giá niêm yết</label>
-                            <input type="number" class="form-control" v-model="form.originalPrice" placeholder="VD: 100000" min="0">
+                            <input type="number" class="form-control border-success" v-model="form.originalPrice" placeholder="VD: 100000" min="0">
                           </div>
                           <div class="col-md-4 mb-2">
                             <label class="form-label small fw-bold">Giảm giá (%)</label>
@@ -461,7 +508,6 @@ onMounted(() => fetchData(true));
                           <div class="col-md-4 mb-2">
                             <label class="form-label small fw-bold">Giá bán ra</label>
                             <input type="number" class="form-control bg-white text-danger fw-bold" v-model="form.price" readonly>
-                            <small class="text-muted" style="font-size: 0.7rem;">Tự động tính</small>
                           </div>
                       </div>
 
@@ -500,7 +546,7 @@ onMounted(() => fetchData(true));
               </div>
               <div class="modal-footer border-0 pb-0 px-0">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Đóng</button>
-                <button type="submit" class="btn btn-primary fw-bold px-4">Lưu thông tin</button>
+                <button type="submit" class="btn btn-primary fw-bold px-4"><i class="bi bi-save me-1"></i> Lưu thông tin</button>
               </div>
             </form>
           </div>
@@ -509,3 +555,23 @@ onMounted(() => fetchData(true));
     </div>
   </div>
 </template>
+
+<style scoped>
+.nav-pills .nav-link {
+    color: #6c757d;
+    border-radius: 0;
+    padding-bottom: 10px;
+    border-bottom: 3px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.nav-pills .nav-link:hover {
+    background-color: #f8f9fa;
+}
+
+.nav-pills .nav-link.active {
+    background-color: transparent;
+    color: #0d6efd;
+    border-bottom: 3px solid #0d6efd;
+}
+</style>
