@@ -157,6 +157,7 @@ onUnmounted(() => {
                                     
                                     <li><router-link class="dropdown-item" to="/profile" @click="isUserDropdownOpen = false"><i class="bi bi-person-badge me-2"></i>Hồ sơ cá nhân</router-link></li>
                                     <li><router-link class="dropdown-item" to="/order-history" @click="isUserDropdownOpen = false"><i class="bi bi-bag-check me-2"></i>Đơn mua</router-link></li>
+                                    <li><router-link class="dropdown-item" to="/liked-news" @click="isUserDropdownOpen = false"><i class="bi bi-heart me-2"></i>Tin tức đã thích</router-link></li>
                                     <li><router-link class="dropdown-item" to="/auth/change-password" @click="isUserDropdownOpen = false"><i class="bi bi-key me-2"></i>Đổi mật khẩu</router-link></li>
                                     <li><hr class="dropdown-divider"></li>
                                     <li><a class="dropdown-item text-danger" href="#" @click.prevent="handleLogout"><i class="bi bi-box-arrow-right me-2"></i>Đăng xuất</a></li>

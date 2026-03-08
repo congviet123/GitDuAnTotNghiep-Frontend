@@ -7,88 +7,94 @@ const router = createRouter({
     // =======================================================
     // 1. SITE ROUTES (GIAO DIỆN KHÁCH HÀNG - PUBLIC)
     // =======================================================
-    { 
-        path: '/',  
-        name: 'home',
-        component: () => import('@/views/site/HomeView.vue') 
+    {
+      path: '/',
+      name: 'home',
+      component: () => import('@/views/site/HomeView.vue')
     },
-    { 
-        path: '/products', 
-        name: 'products',
-        component: () => import('@/views/site/ProductList.vue') 
-    },  
-    { 
-        path: '/products/:id', 
-        name: 'product-detail',
-        component: () => import('@/views/site/ProductDetail.vue') 
+    {
+      path: '/products',
+      name: 'products',
+      component: () => import('@/views/site/ProductList.vue')
+    },
+    {
+      path: '/products/:id',
+      name: 'product-detail',
+      component: () => import('@/views/site/ProductDetail.vue')
     },
     {
       path: '/contact',
       name: 'contact',
       component: () => import('@/views/site/ContactView.vue')
     },
-    { 
-      path: '/about', 
+    {
+      path: '/about',
       name: 'about',
-      component: () => import('@/views/site/AboutView.vue') 
+      component: () => import('@/views/site/AboutView.vue')
     },
     // --- ROUTE TIN TỨC ---
-    { 
-      path: '/news', 
+    {
+      path: '/news',
       name: 'news',
-      component: () => import('@/views/site/NewsView.vue') 
+      component: () => import('@/views/site/NewsView.vue')
     },
-    { 
-      path: '/news/:id', 
+    {
+      path: '/news/:id',
       name: 'news-detail',
-      component: () => import('@/views/site/NewsDetail.vue') 
+      component: () => import('@/views/site/NewsDetail.vue')
     },
 
     // --- Các trang cần đăng nhập (User) ---
-    { 
-        path: '/cart', 
-        name: 'cart',
-        component: () => import('@/views/site/CartView.vue'),
-        meta: { requiresAuth: true } 
+    {
+      path: '/cart',
+      name: 'cart',
+      component: () => import('@/views/site/CartView.vue'),
+      meta: { requiresAuth: true }
     },
-    { 
-        path: '/order-history', 
-        name: 'order-history',
-        component: () => import('@/views/site/OrderHistory.vue'), 
-        meta: { requiresAuth: true } 
+    {
+      path: '/order-history',
+      name: 'order-history',
+      component: () => import('@/views/site/OrderHistory.vue'),
+      meta: { requiresAuth: true }
     },
-    { 
-        path: '/profile', // Route này bạn đã khai báo đúng, nên nó phải chạy
-        name: 'profile',
-        component: () => import('@/views/auth/Profile.vue'), 
-        meta: { requiresAuth: true } 
+    {
+      path: '/liked-news',
+      name: 'liked-news',
+      component: () => import('@/views/site/LikedNews.vue'),
+      meta: { requiresAuth: true }
     },
-    { 
-        path: '/auth/change-password', 
-        name: 'change-password',
-        component: () => import('@/views/auth/ChangePassword.vue'), 
-        meta: { requiresAuth: true } 
+    {
+      path: '/profile', // Route này bạn đã khai báo đúng, nên nó phải chạy
+      name: 'profile',
+      component: () => import('@/views/auth/Profile.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/auth/change-password',
+      name: 'change-password',
+      component: () => import('@/views/auth/ChangePassword.vue'),
+      meta: { requiresAuth: true }
     },
 
     // =======================================================
     // 2. AUTH ROUTES (XÁC THỰC TÀI KHOẢN)
     // =======================================================
-    { 
-        path: '/login', 
-        name: 'login',
-        component: () => import('@/views/auth/Login.vue'),
-        meta: { guestOnly: true }
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/auth/Login.vue'),
+      meta: { guestOnly: true }
     },
-    { 
-        path: '/register', 
-        name: 'register',
-        component: () => import('@/views/auth/Register.vue'),
-        meta: { guestOnly: true }
+    {
+      path: '/register',
+      name: 'register',
+      component: () => import('@/views/auth/Register.vue'),
+      meta: { guestOnly: true }
     },
-    { 
-        path: '/auth/forgot-password', 
-        name: 'forgot-password',
-        component: () => import('@/views/auth/ForgotPassword.vue') 
+    {
+      path: '/auth/forgot-password',
+      name: 'forgot-password',
+      component: () => import('@/views/auth/ForgotPassword.vue')
     },
 
     // =======================================================
@@ -96,7 +102,7 @@ const router = createRouter({
     // =======================================================
     {
       path: '/admin',
-      component: () => import('@/views/admin/AdminLayout.vue'), 
+      component: () => import('@/views/admin/AdminLayout.vue'),
       meta: { requiresAuth: true, requiresAdmin: true },
       children: [
         { path: '', redirect: '/admin/dashboard' },
@@ -116,7 +122,7 @@ const router = createRouter({
     // Trang 404: Bắt tất cả các đường dẫn sai -> Về trang chủ
     { path: '/:pathMatch(.*)*', redirect: '/' }
   ],
-  
+
   // Tự động cuộn lên đầu trang khi chuyển route
   scrollBehavior(to, from, savedPosition) {
     return savedPosition || { top: 0 };
@@ -128,37 +134,37 @@ const router = createRouter({
 // =======================================================
 router.beforeEach((to, from, next) => {
   const authStore = useAuthStore();
-  
+
   // [QUAN TRỌNG] Đảm bảo state được load từ localStorage trước khi check
   // (Mặc dù trong store/auth.js ta đã làm rồi, nhưng check lại cho chắc)
   if (!authStore.isAuthenticated && localStorage.getItem('token')) {
-      // Nếu store chưa có nhưng localStorage có -> Force load lại (case hiếm)
-      authStore.login(JSON.parse(localStorage.getItem('user')), localStorage.getItem('token'));
+    // Nếu store chưa có nhưng localStorage có -> Force load lại (case hiếm)
+    authStore.login(JSON.parse(localStorage.getItem('user')), localStorage.getItem('token'));
   }
 
   const isAuthenticated = authStore.isAuthenticated;
-  
+
   // 1. Kiểm tra Guest Only (Login/Register)
   if (to.meta.guestOnly && isAuthenticated) {
-     return next('/');
+    return next('/');
   }
 
   // 2. Kiểm tra yêu cầu Đăng nhập (requiresAuth)
   if (to.meta.requiresAuth && !isAuthenticated) {
-      return next('/login');
+    return next('/login');
   }
 
   // 3. Kiểm tra quyền Admin (requiresAdmin)
   if (to.meta.requiresAdmin) {
-    const userRole = authStore.user?.role?.name; 
+    const userRole = authStore.user?.role?.name;
     const validRoles = ['ROLE_ADMIN', 'ADMIN', 'ROLE_STAFF'];
-    
+
     if (!validRoles.includes(userRole)) {
-        alert("Bạn không có quyền truy cập vùng quản trị!");
-        return next('/');
+      alert("Bạn không có quyền truy cập vùng quản trị!");
+      return next('/');
     }
   }
-  
+
   // Cho phép đi tiếp
   next();
 });
