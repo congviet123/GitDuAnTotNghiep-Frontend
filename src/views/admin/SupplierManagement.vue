@@ -5,7 +5,7 @@
 
     import supplierService from "@/services/supplierService";
     import apiClient from "@/services/api";
-
+    import { watch } from 'vue';
     // --- STATE ---
     const suppliers = ref([]);
     const isEdit = ref(false);
@@ -40,17 +40,27 @@
    
 
     const handleSearch = async () => {
-    if (!searchQuery.value.trim()) {
-        loadSuppliers();
+    const keyword = searchQuery.value.trim();
+    
+
+    watch(searchQuery, (newValue) => {
+        if (!newValue.trim()) {
+            loadSuppliers();
+        }
+    });
+
+    // Nếu ô tìm kiếm trống → load lại toàn bộ
+    if (!keyword) {
+        await loadSuppliers();
         return;
     }
 
     const res = await apiClient.get("/api/suppliers/search", {
-        params: { keyword: searchQuery.value }
+        params: { keyword }
     });
 
     suppliers.value = res.data;
-    };
+};
 
     // --- CRUD ---
     const openModal = (item = null) => {
@@ -133,7 +143,7 @@
                                     class="form-control border-start-0 border-end-0" 
                                     v-model="searchQuery" 
                                     @keyup.enter="handleSearch"
-                                    placeholder="Tìm theo tên công ty, người liên hệ, sđt...">
+                                    placeholder="Tìm theo tên công ty...">
                                 <button class="btn btn-primary px-4 fw-bold" @click="handleSearch">
                                     Tìm kiếm
                                 </button>

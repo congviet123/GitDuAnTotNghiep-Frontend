@@ -1,3 +1,4 @@
+// axios là thư viện giúp gửi HTTP request dễ dàng hơn, hỗ trợ interceptor để xử lý token và lỗi toàn cục
 import axios from 'axios';
 import { useAuthStore } from '@/store/auth';
 import Swal from 'sweetalert2';
