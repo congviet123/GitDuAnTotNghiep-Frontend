@@ -392,7 +392,7 @@ onMounted(() => fetchData(true));
                 <span class="fw-bold" :class="{'text-danger': p.quantity < 5, 'text-success': p.quantity >= 5}">{{ p.quantity }}</span>
                 <i v-if="p.quantity < 5" class="bi bi-exclamation-triangle-fill text-warning ms-1"></i>
             </td>
-            <td><small>{{ formatDate(p.createDate) }}</small></td>
+            <td><small>{{ formatDate(p.lastImportDate) }}</small></td>
             <td>
                <span class="badge rounded-pill" :class="p.available ? 'bg-success' : 'bg-secondary'">{{ p.available ? 'Kinh doanh' : 'Ngừng bán' }}</span>
                <div v-if="p.isLiquidation" class="badge bg-warning text-dark mt-1">Thanh lý</div>
@@ -436,7 +436,12 @@ onMounted(() => fetchData(true));
 
                           <div class="col-12 mb-2">
                               <label class="form-label small fw-bold">Ngày nhập kho</label>
-                              <input type="date" class="form-control" v-model="form.createDate">
+                              <input 
+                                type="text" 
+                                class="form-control" 
+                                :value="formatDate(form.lastImportDate)" 
+                                disabled
+                                >
                               <div class="form-text small">Để trống sẽ lấy ngày hôm nay</div>
                           </div>
                       </div>

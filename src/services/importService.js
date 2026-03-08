@@ -10,5 +10,8 @@ export default {
     },
     create(data) {
         return api.post("/api/imports", data);
+    },
+    remove(id) {
+        return api.delete(`/api/imports/${id}`);
     }
 };
