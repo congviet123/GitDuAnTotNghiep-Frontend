@@ -4,19 +4,23 @@ import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
 
-// --- STATE ---
-const products = ref([]);
-const categories = ref([]);
-const isEdit = ref(false);
-const loading = ref(false);
-const selectedFile = ref(null);
-const searchResultLabel = ref(''); 
+// ============================================================================
+// 1. STATE & BIẾN TOÀN CỤC (QUẢN LÝ TRẠNG THÁI)
+// ============================================================================
 
-// [MỚI] Biến quản lý Tab đang Active (mặc định là 'active' - Đang kinh doanh)
+const products = ref([]); // Danh sách toàn bộ sản phẩm lấy từ API
+const categories = ref([]); // Danh sách danh mục sản phẩm để hiển thị trong select box
+const isEdit = ref(false); // Cờ xác định đang ở chế độ Thêm Mới (false) hay Cập Nhật (true)
+const loading = ref(false); // Trạng thái loading khi đang gọi API
+const selectedFile = ref(null); // Lưu trữ file ảnh được người dùng chọn từ máy tính
+const searchResultLabel = ref(''); // Dòng chữ hiển thị kết quả tìm kiếm (VD: Kết quả cho: Tên "Táo")
+
+// [QUẢN LÝ TAB] Biến lưu trạng thái Tab hiện tại. Mặc định là 'active' (Sản phẩm đang kinh doanh)
 const activeTab = ref('active'); 
 
-const pageSize = ref(1000); 
+const pageSize = ref(1000); // Giới hạn số lượng sản phẩm lấy về trên 1 trang (đang set lớn để không cần phân trang ở frontend)
 
+// [BỘ LỌC TÌM KIẾM] Object lưu trữ các giá trị người dùng nhập vào khung tìm kiếm
 const filters = reactive({
     keyword: '',
     categoryId: '',
@@ -28,43 +32,58 @@ const filters = reactive({
     maxDiscount: null  
 });
 
+// [FORM DỮ LIỆU] Object gắn với Modal thêm/sửa sản phẩm. 
+// Khai báo sẵn các giá trị mặc định để tránh lỗi undefined khi binding dữ liệu.
 const form = reactive({
     id: null, 
     name: '', 
-    price: 0,           
-    originalPrice: 0,   
-    importPrice: 0,     
-    discount: 0,        
-    quantity: 0, 
-    createDate: '',     
-    isLiquidation: false, 
+    price: 0,           // Giá bán ra cuối cùng (đã trừ chiết khấu)
+    originalPrice: 0,   // Giá niêm yết ban đầu
+    importPrice: 0,     // Giá nhập vốn (Khóa ở frontend, chỉ được tính từ Phiếu Nhập)
+    discount: 0,        // % Giảm giá
+    quantity: 0,        // Số lượng tồn kho (Khóa ở frontend, chỉ được cộng dồn từ Phiếu Nhập)
+    createDate: '',     // Ngày nhập kho gần nhất (Lấy từ ngày tạo phiếu)
+    isLiquidation: false, // Cờ đánh dấu hàng thanh lý
     description: '', 
     image: null, 
-    available: true, 
+    available: true,    // Cờ đánh dấu sản phẩm đang được phép bán
     category: { id: null }
 });
 
-// --- HELPER FORMAT ---
+// ============================================================================
+// 2. HELPER FORMATTER (CÁC HÀM TIỆN ÍCH ĐỊNH DẠNG DỮ LIỆU)
+// ============================================================================
+
+// Định dạng số tiền thành chuỗi VNĐ (VD: 100000 -> 100.000 ₫)
 const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
 
+// Xử lý đường dẫn ảnh hiển thị
 const getImageUrl = (imgName) => {
-    if (!imgName) return 'https://placehold.co/60x60?text=No+Img';
-    if (imgName.startsWith('blob:')) return imgName;
-    if (imgName.startsWith('imgs/')) return `http://localhost:8080/${imgName}`;
+    if (!imgName) return 'https://placehold.co/60x60?text=No+Img'; // Ảnh mặc định nếu chưa có ảnh
+    if (imgName.startsWith('blob:')) return imgName; // Nếu là ảnh vừa upload (dạng blob) thì hiển thị luôn
+    if (imgName.startsWith('imgs/')) return `http://localhost:8080/${imgName}`; // Xử lý đường dẫn từ backend
     return `http://localhost:8080/imgs/${imgName}`;
 };
 
+// Định dạng chuỗi ngày tháng từ Database (VD: 2024-01-01T12:00:00) thành định dạng hiển thị cho người Việt (DD/MM/YYYY)
 const formatDate = (dateString) => {
     if (!dateString) return '';
     return new Date(dateString).toLocaleDateString('vi-VN');
 };
 
+// Định dạng chuỗi ngày tháng từ Database để có thể bind vào thẻ <input type="date"> (Định dạng YYYY-MM-DD)
 const formatForInput = (dateString) => {
     if (!dateString) return '';
     return new Date(dateString).toISOString().split('T')[0];
 };
 
-// --- LOGIC TÍNH GIÁ TỰ ĐỘNG ---
+// ============================================================================
+// 3. LOGIC XỬ LÝ TỰ ĐỘNG (WATCHERS & COMPUTED)
+// ============================================================================
+
+// [TÍNH GIÁ TỰ ĐỘNG] 
+// Lắng nghe (watch) sự thay đổi của 'originalPrice' (Giá niêm yết) và 'discount' (% Giảm giá).
+// Nếu 1 trong 2 thay đổi, tự động tính lại 'price' (Giá bán ra).
 watch(
     () => [form.originalPrice, form.discount],
     ([newOriginal, newDiscount]) => {
@@ -75,33 +94,38 @@ watch(
     }
 );
 
-// --- LOGIC PHÂN CHIA TAB SẢN PHẨM ---
-// Sản phẩm Đang kinh doanh (Phải có Giá niêm yết > 0)
+// [PHÂN CHIA TAB SẢN PHẨM] - Tự động tính toán mảng dữ liệu dựa trên mảng products gốc
+// Tab 1: Danh sách Sản phẩm đang kinh doanh (Điều kiện: Phải được cấu hình Giá niêm yết > 0)
 const activeProducts = computed(() => {
     return products.value.filter(p => p.originalPrice > 0);
 });
 
-// Sản phẩm Bản Nháp / Chưa thiết lập giá (Giá niêm yết = 0 hoặc null)
+// Tab 2: Danh sách Sản phẩm Bản Nháp / Chưa thiết lập giá (Điều kiện: Giá niêm yết = 0 hoặc null)
 const draftProducts = computed(() => {
     return products.value.filter(p => !p.originalPrice || p.originalPrice <= 0);
 });
 
-// Lấy danh sách sản phẩm hiển thị dựa vào Tab đang chọn
+// Trả về mảng dữ liệu tương ứng với Tab mà người dùng đang click chọn để render ra Table
 const displayedProducts = computed(() => {
     if (activeTab.value === 'active') return activeProducts.value;
     return draftProducts.value;
 });
 
-// Đổi Tab
+// Hàm chuyển đổi Tab khi click
 const setTab = (tabName) => {
     activeTab.value = tabName;
 };
 
-// --- METHODS ---
+// ============================================================================
+// 4. API CALLS VÀ LOGIC NGHIỆP VỤ CHÍNH (METHODS)
+// ============================================================================
 
+// [LẤY DỮ LIỆU TỪ SERVER]
+// Hàm này gọi API để lấy danh sách Sản phẩm (kèm bộ lọc nếu có) và danh sách Danh mục.
 const fetchData = async (showWarning = true) => {
     loading.value = true;
     try {
+        // Gom toàn bộ tham số từ form search
         const params = {
             page: 0, size: pageSize.value,
             keyword: filters.keyword || null,
@@ -114,11 +138,13 @@ const fetchData = async (showWarning = true) => {
             maxDiscount: filters.maxDiscount || null  
         };
 
+        // Gửi 2 request song song để tiết kiệm thời gian chờ
         const [resProducts, resCategories] = await Promise.all([
             apiClient.get('/admin/products', { params }),
             apiClient.get('/admin/categories')
         ]);
 
+        // Cập nhật state (Tùy thuộc backend trả về cấu trúc phân trang hay mảng thuần)
         if (resProducts.data.content) {
             products.value = resProducts.data.content;
         } else {
@@ -126,7 +152,8 @@ const fetchData = async (showWarning = true) => {
         }
         categories.value = resCategories.data;
         
-        if (showWarning) checkLowStock(activeProducts.value); // Chỉ check cảnh báo đối với hàng có giá
+        // Sau khi lấy xong dữ liệu, gọi hàm kiểm tra Tồn kho để bắn thông báo (nếu được phép)
+        if (showWarning) checkLowStock(products.value); 
 
     } catch (err) {
         console.error(err);
@@ -136,16 +163,20 @@ const fetchData = async (showWarning = true) => {
     }
 };
 
+// [KIỂM TRA CẢNH BÁO TỒN KHO]
+// Lọc qua toàn bộ danh sách, nếu phát hiện số lượng (quantity) < 5 thì bắn Toast màu vàng góc phải.
 const checkLowStock = (list) => {
-    const lowStockItems = list.filter(p => parseFloat(p.quantity) < 5 && p.available);
+    const lowStockItems = list.filter(p => parseFloat(p.quantity) < 5);
     if (lowStockItems.length > 0) {
         window.Toast.fire({
             icon: 'warning',
-            title: `Cảnh báo: Có ${lowStockItems.length} sản phẩm đang bán sắp hết hàng (< 5kg)!`
+            title: `Cảnh báo: Có ${lowStockItems.length} sản phẩm sắp hết hàng (< 5kg)!`
         });
     }
 };
 
+// [TÌM KIẾM SẢN PHẨM]
+// Xây dựng chuỗi label mô tả bộ lọc đang được sử dụng, sau đó gọi lại hàm fetchData để fetch list mới.
 const searchProducts = async () => {
     const parts = [];
     if (filters.keyword) parts.push(`Tên: "${filters.keyword}"`);
@@ -169,8 +200,9 @@ const searchProducts = async () => {
         searchResultLabel.value = ''; 
     }
 
-    await fetchData(false);
+    await fetchData(false); // Không show lại popup cảnh báo tồn kho khi tìm kiếm
     
+    // Reset lại ô input form tìm kiếm
     filters.keyword = '';
     filters.categoryId = '';
     filters.minPrice = null;
@@ -181,6 +213,7 @@ const searchProducts = async () => {
     filters.maxDiscount = null;
 };
 
+// [XÓA BỘ LỌC] Khôi phục toàn bộ trạng thái tìm kiếm về mặc định
 const resetFilters = () => {
     searchResultLabel.value = ''; 
     Object.assign(filters, { 
@@ -192,9 +225,11 @@ const resetFilters = () => {
     fetchData(false);
 };
 
+// [MỞ MODAL FORM THÊM / SỬA]
 const openModal = async (productId = null) => {
-    selectedFile.value = null;
+    selectedFile.value = null; // Xóa file ảnh cũ đã chọn (nếu có)
     
+    // Reset toàn bộ form về trạng thái trống rỗng mặc định
     Object.assign(form, {
         id: null, name: '', price: 0, quantity: 0, description: '', 
         image: null, available: true, isLiquidation: false,
@@ -203,11 +238,14 @@ const openModal = async (productId = null) => {
     });
 
     if (productId) {
+        // NẾU CÓ PRODUCT ID TRUYỀN VÀO -> ĐANG LÀ CHẾ ĐỘ CHỈNH SỬA
         isEdit.value = true;
         try {
+            // Gọi API lấy thông tin chi tiết sản phẩm đó để bind vào Form
             const res = await apiClient.get(`/admin/products/${productId}`);
             Object.assign(form, res.data);
             
+            // Xử lý riêng format hiển thị ngày tháng
             if (res.data.createDate) {
                 form.createDate = formatForInput(res.data.createDate);
             }
@@ -215,21 +253,30 @@ const openModal = async (productId = null) => {
             if (!form.category) form.category = { id: categories.value[0]?.id };
         } catch (err) { return; }
     } else { 
+        // CHẾ ĐỘ THÊM MỚI SẢN PHẨM
         isEdit.value = false; 
     }
     
+    // Sử dụng Bootstrap Javascript Object để hiển thị Modal
     const modalEl = document.getElementById('productModal');
     if(modalEl) new bootstrap.Modal(modalEl).show();
 };
 
+// [XỬ LÝ ẢNH UPLOAD]
 const onFileSelected = (event) => {
     const file = event.target.files[0];
-    if (file) { selectedFile.value = file; form.image = URL.createObjectURL(file); }
+    if (file) { 
+        selectedFile.value = file; 
+        // Tạo URL dạng blob để preview ảnh ngay lập tức mà chưa cần upload lên server
+        form.image = URL.createObjectURL(file); 
+    }
 };
 
+// [LƯU DỮ LIỆU SẢN PHẨM: CREATE HOẶC UPDATE]
 const saveProduct = async () => {
-    const formData = new FormData();
+    const formData = new FormData(); // Sử dụng FormData để có thể gửi kèm cả Object JSON và File Ảnh
     
+    // Chuẩn bị payload (dữ liệu JSON)
     const productData = {
         id: form.id, 
         name: form.name, 
@@ -245,25 +292,32 @@ const saveProduct = async () => {
         category: { id: form.category.id }
     };
 
+    // Đính kèm JSON dạng Blob (để Spring Boot hiểu là @RequestPart("product"))
     formData.append('product', new Blob([JSON.stringify(productData)], { type: 'application/json' }));
+    // Gửi kèm file ảnh nếu có chọn ảnh mới
     if (selectedFile.value) formData.append('imageFile', selectedFile.value);
 
     try {
         const config = { headers: { 'Content-Type': 'multipart/form-data' } };
         if (isEdit.value) {
+            // NẾU LÀ SỬA: Gọi API PUT
             await apiClient.put(`/admin/products/${form.id}`, formData, config);
             window.Toast.fire({ icon: 'success', title: 'Cập nhật thành công!' });
         } else {
+            // NẾU LÀ THÊM MỚI: Gọi API POST
             await apiClient.post('/admin/products', formData, config);
             window.Toast.fire({ icon: 'success', title: 'Thêm mới thành công!' });
         }
         
-        fetchData(false);
+        fetchData(false); // Cập nhật lại danh sách Data Table sau khi lưu thành công
+        
+        // Đóng Modal popup
         const modalEl = document.getElementById('productModal');
         const modalInstance = bootstrap.Modal.getInstance(modalEl);
         if (modalInstance) modalInstance.hide();
 
     } catch (err) { 
+        // Xử lý hiển thị thông báo lỗi nếu Server trả về thất bại
         console.error("Lỗi API:", err);
         let errorMsg = 'Lỗi lưu dữ liệu';
         if (err.response && err.response.data) {
@@ -277,7 +331,9 @@ const saveProduct = async () => {
     }
 };
 
+// [XÓA SẢN PHẨM]
 const deleteProduct = async (item) => {
+    // [LOGIC RÀNG BUỘC]: Không cho phép xóa trực tiếp nếu sản phẩm vẫn còn số lượng trong kho và không phải hàng thanh lý
     if (item.quantity > 0 && !item.isLiquidation) {
         Swal.fire({ 
             icon: 'warning', title: 'Không thể xóa!', 
@@ -285,14 +341,18 @@ const deleteProduct = async (item) => {
         });
         return;
     }
+
+    // Xác nhận 2 lớp bằng SweetAlert2
     const result = await Swal.fire({
         title: 'Xác nhận xóa?',
         html: item.quantity > 0 ? `Hàng thanh lý (còn ${item.quantity}kg). Xóa?` : `Sản phẩm đã hết hàng. Xóa?`,
         icon: 'warning', showCancelButton: true, confirmButtonText: 'Xóa ngay', confirmButtonColor: '#d33'
     });
+
     if (result.isConfirmed) {
         try {
             await apiClient.delete(`/admin/products/${item.id}`);
+            // Loại bỏ dòng sản phẩm đó ra khỏi list hiện tại mà không cần load lại trang
             products.value = products.value.filter(p => p.id !== item.id);
             window.Toast.fire({ icon: 'success', title: 'Đã xóa!' });
         } catch (err) { 
@@ -303,6 +363,7 @@ const deleteProduct = async (item) => {
     }
 };
 
+// Lifecycle Hook: Chạy hàm lấy dữ liệu lần đầu tiên ngay khi component được render xong
 onMounted(() => fetchData(true));
 </script>
 
@@ -426,11 +487,16 @@ onMounted(() => fetchData(true));
                 <span v-if="p.discount > 0" class="badge bg-danger">-{{ p.discount }}%</span>
                 <span v-else class="text-muted small">--</span>
             </td>
+            
             <td>
-                <span class="fw-bold" :class="{'text-danger': p.quantity < 5, 'text-success': p.quantity >= 5}">{{ p.quantity }}</span>
-                <i v-if="p.quantity < 5" class="bi bi-exclamation-triangle-fill text-warning ms-1"></i>
+                <span v-if="p.quantity < 5" class="fw-bold text-danger">
+                    {{ p.quantity }} <i class="bi bi-exclamation-triangle-fill text-warning ms-1" title="Sắp hết hàng"></i>
+                </span>
+                <span v-else class="fw-bold text-success">{{ p.quantity }}</span>
             </td>
-            <td><small>{{ formatDate(p.lastImportDate) }}</small></td>
+
+            <td><small>{{ formatDate(p.createDate) }}</small></td>
+            
             <td>
                <span class="badge rounded-pill" :class="p.available ? 'bg-success' : 'bg-secondary'">{{ p.available ? 'Kinh doanh' : 'Ngừng bán' }}</span>
                <div v-if="p.isLiquidation" class="badge bg-warning text-dark mt-1">Thanh lý</div>
@@ -455,7 +521,7 @@ onMounted(() => fetchData(true));
       <div class="modal-dialog modal-xl modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg">
           <div class="modal-header bg-primary text-white">
-            <h5 class="modal-title fw-bold">{{ isEdit ? 'Cập nhật sản phẩm' : 'Nhập hàng mới' }}</h5>
+            <h5 class="modal-title fw-bold">{{ isEdit ? 'Cập nhật sản phẩm' : 'Thêm sản phẩm mới' }}</h5>
             <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body p-4">
@@ -472,22 +538,22 @@ onMounted(() => fetchData(true));
                           
                           <div class="col-md-6 mb-2">
                             <label class="form-label small fw-bold">Giá nhập (Vốn)</label>
-                            <input type="number" class="form-control" v-model="form.importPrice" min="0">
+                            <input type="number" class="form-control bg-white" v-model="form.importPrice" disabled>
                           </div>
                           <div class="col-md-6 mb-2">
-                            <label class="form-label small fw-bold">Số lượng (Kg) *</label>
-                            <input type="number" step="0.1" class="form-control border-primary" v-model="form.quantity" required min="0">
+                            <label class="form-label small fw-bold">Số lượng (Kg)</label>
+                            <input type="number" step="0.1" class="form-control bg-white text-danger fw-bold" v-model="form.quantity" disabled>
                           </div>
 
                           <div class="col-12 mb-2">
-                              <label class="form-label small fw-bold">Ngày nhập kho</label>
+                              <label class="form-label small fw-bold">Ngày nhập kho (Cập nhật tự động từ Phiếu Nhập)</label>
                               <input 
                                 type="text" 
-                                class="form-control" 
-                                :value="formatDate(form.lastImportDate)" 
+                                class="form-control bg-white" 
+                                :value="formatDate(form.createDate)" 
                                 disabled
                                 >
-                              <div class="form-text small">Để trống sẽ lấy ngày hôm nay</div>
+                              <div class="form-text small text-danger"><i class="bi bi-info-circle me-1"></i>Tồn kho và Giá vốn được hệ thống tự động tính toán thông qua Phiếu Nhập Kho.</div>
                           </div>
                       </div>
 
@@ -562,6 +628,7 @@ onMounted(() => fetchData(true));
 </template>
 
 <style scoped>
+/* Tùy chỉnh CSS cho Menu Tab Nav-Pills đẹp mắt hơn */
 .nav-pills .nav-link {
     color: #6c757d;
     border-radius: 0;

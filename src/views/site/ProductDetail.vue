@@ -100,7 +100,27 @@ const submitReview = async () => {
         
     } catch (err) {
         console.error(err);
-        Swal.fire('Lỗi', err.response?.data || 'Không thể gửi đánh giá. Vui lòng thử lại.', 'error');
+        
+        let errorMsg = 'Không thể gửi đánh giá. Vui lòng thử lại.';
+        
+        // Lấy thông báo lỗi từ Backend (do file ReviewServiceImpl trả về)
+        if (err.response && err.response.data) {
+            errorMsg = err.response.data;
+        }
+
+        // Nếu thông báo là do chưa mua hàng / đơn chưa hoàn thành
+        if (errorMsg.includes('chưa thể đánh giá') || errorMsg.includes('chưa hoàn thành')) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Từ chối đánh giá',
+                text: errorMsg,
+                confirmButtonColor: '#ff6b01', // Màu cam cho đồng bộ với theme
+                confirmButtonText: 'Đã hiểu'
+            });
+        } else {
+            // Lỗi hệ thống khác
+            Swal.fire('Lỗi', errorMsg, 'error');
+        }
     }
 };
 

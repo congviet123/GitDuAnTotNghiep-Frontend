@@ -4,9 +4,7 @@ import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
 
-// =======================================================================
-// 1. STATE & VARIABLES
-// =======================================================================
+// 1. xử lý dữ liệu đơn hàng, đơn hàng được chọn, trạng thái loading, thông tin ngân hàng shop, thời gian hiện tại để đếm ngược
 const orders = ref([]);
 const selectedOrder = ref({ 
     id: null, orderDetails: [], totalAmount: 0, createDate: null, 
@@ -22,9 +20,7 @@ const shopBank = ref({
 
 const currentNow = ref(new Date().getTime()); 
 
-// =======================================================================
-// 2. COMPUTED PROPERTIES & TIMER LOGIC
-// =======================================================================
+// 2. xử lý đếm ngược thời gian đổi trả & điều kiện hiển thị nút "Yêu cầu hoàn trả"
 
 const startCountdownTimer = () => {
     if (countdownInterval) clearInterval(countdownInterval);
@@ -33,7 +29,7 @@ const startCountdownTimer = () => {
     }, 1000);
 };
 
-// [ĐÃ SỬA] - Hàm tính toán đếm ngược cực kỳ thông minh
+// Hàm tính toán đếm ngược cực kỳ thông minh
 const getReturnTimeLeft = (order) => {
     // Ưu tiên lấy ngày Giao hàng. Nếu đơn cũ bị null, lấy tạm Ngày đặt hàng để đếm
     const baseDateString = order.deliveryDate || order.createDate;
@@ -110,9 +106,7 @@ const displayNote = computed(() => {
     return raw;
 });
 
-// =======================================================================
-// 3. API METHODS
-// =======================================================================
+// 3. xử lý gọi API lấy lịch sử đơn hàng, thông tin ngân hàng shop, hủy đơn hàng, yêu cầu hoàn trả, xóa đơn hàng
 const fetchOrderHistory = async () => {
     loading.value = true;
     try {
@@ -130,10 +124,7 @@ const fetchBankInfo = async () => {
     }
 };
 
-// =======================================================================
-// 4. LOGIC NGHIỆP VỤ
-// =======================================================================
-
+// 4. sử lý gọi API hủy đơn hàng, yêu cầu hoàn trả, xóa đơn hàng
 const cancelOrder = async (order) => {
     if (!isTransfer(order.paymentMethod)) {
         const { value: reason } = await Swal.fire({
@@ -352,7 +343,7 @@ const deleteOrder = async (orderId) => {
 };
 
 // =======================================================================
-// 5. HELPER FUNCTIONS
+// 5. xử lý hiển thị thông tin đơn hàng, trạng thái, hình thức thanh toán, thời gian đếm ngược đổi trả
 // =======================================================================
 const isTransfer = (method) => method === 'BANK' || method === 'QR';
 const getPaymentMethodDisplay = (order) => isTransfer(order.paymentMethod) ? 'Chuyển khoản (QR)' : 'Tiền mặt (COD)';
@@ -378,10 +369,23 @@ const getStatusBadgeClass = (status) => {
 
 const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN') + ' ' + new Date(d).toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : 'N/A';
-const getImageUrl = (img) => img ? (img.startsWith('http') ? img : `http://localhost:8080/imgs/${img}`) : 'https://placehold.co/100';
+
+// [ĐÃ SỬA] Hàm xử lý ảnh chuẩn xác chống lỗi
+const getImageUrl = (imageName) => {
+    if (!imageName) return 'https://placehold.co/100x100?text=No+Image';
+    if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
+
+    let cleanName = imageName;
+    if (cleanName.startsWith('/')) cleanName = cleanName.substring(1);
+
+    const baseUrl = 'http://localhost:8080';
+    if (cleanName.startsWith('imgs/')) return `${baseUrl}/${cleanName}`;
+    
+    return `${baseUrl}/imgs/${cleanName}`;
+};
 
 // =======================================================================
-// 6. MODAL & POLLING
+// 6. xử lý hiển thị chi tiết đơn hàng & thanh toán lại (đơn chuyển khoản) & polling trạng thái đơn hàng (đơn chuyển khoản)
 // =======================================================================
 const viewDetails = async (orderId) => {
     try {
@@ -553,8 +557,21 @@ onMounted(() => {
                                     <thead><tr class="text-secondary small fw-bold border-bottom"><th class="ps-0 pb-2">Sản phẩm</th><th class="text-end pb-2">Đơn giá</th><th class="text-center pb-2">SL</th><th class="text-end pb-2">Thành tiền</th></tr></thead>
                                     <tbody>
                                         <tr v-for="detail in selectedOrder.orderDetails" :key="detail.id" class="border-bottom">
-                                            <td class="ps-0 py-3"><div class="d-flex align-items-center"><img :src="getImageUrl(detail.product?.image)" class="rounded bg-light border me-3" style="width: 50px; height: 50px; object-fit: cover;"><div><div class="fw-bold text-dark">{{ detail.product?.name }}</div><small class="text-muted">Mã SP: #{{ detail.product?.id }}</small></div></div></td>
-                                            <td class="text-end text-muted">{{ formatPrice(detail.price) }}</td><td class="text-center fw-bold">x{{ detail.quantity }}</td><td class="text-end fw-bold text-dark">{{ formatPrice(detail.price * detail.quantity) }}</td>
+                                            <td class="ps-0 py-3">
+                                                <div class="d-flex align-items-center">
+                                                    <img :src="getImageUrl(detail.product?.image)" 
+                                                         @error="e => e.target.src = 'https://placehold.co/100x100?text=No+Image'"
+                                                         class="rounded bg-light border me-3" 
+                                                         style="width: 50px; height: 50px; object-fit: cover;">
+                                                    <div>
+                                                        <div class="fw-bold text-dark">{{ detail.product?.name }}</div>
+                                                        <small class="text-muted">Mã SP: #{{ detail.product?.id }}</small>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                            <td class="text-end text-muted">{{ formatPrice(detail.price) }}</td>
+                                            <td class="text-center fw-bold">x{{ detail.quantity }}</td>
+                                            <td class="text-end fw-bold text-dark">{{ formatPrice(detail.price * detail.quantity) }}</td>
                                         </tr>
                                     </tbody>
                                 </table>
