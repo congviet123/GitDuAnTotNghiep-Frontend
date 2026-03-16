@@ -54,8 +54,8 @@ const orderMonth = ref('all');
 const orderChartInstance = ref(null);
 
 const mockOrder = {
-    yearly: { labels: ['Hoàn tất', 'Đã hủy'], data: [2500, 180] },
-    monthly: { labels: ['Hoàn tất', 'Đã hủy'], data: [200, 15] }
+    yearly: { labels: ['Hoàn tất', 'Đã hoàn trả'], data: [2500, 180] },
+    monthly: { labels: ['Hoàn tất', 'Đã hoàn trả'], data: [200, 15] }
 };
 
 // ==========================================
@@ -325,7 +325,7 @@ onMounted(() => {
                         </div>
                     </div>
                     <div class="card-body d-flex flex-column align-items-center justify-content-center">
-                        <h6 class="small text-muted mb-3">Tỷ lệ Hoàn tất vs Đã hủy</h6>
+                        <h6 class="small text-muted mb-3">Tỷ lệ Hoàn tất vs Đã hoàn trả</h6>
                         <div style="height: 250px; width: 100%;">
                             <canvas id="orderChart"></canvas>
                         </div>

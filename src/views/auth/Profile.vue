@@ -13,12 +13,16 @@ const activeTab = ref('info');
 const loading = ref(false);
 const pageLoading = ref(true); // Loading xoay khi mới vào trang
 
+//  State cho phần Thiết lập mật khẩu mới
+const showPassword = ref(false);
+
 // Form thông tin cá nhân
 const form = reactive({
     username: '',
     fullname: '',
     email: '',
-    phone: ''
+    phone: '',
+    newPassword: '' //  Trường lưu mật khẩu mới nếu người dùng muốn đổi
 });
 
 // State cho địa chỉ
@@ -42,6 +46,7 @@ const fetchProfile = async () => {
         // Gọi API: /rest/account/profile
         const response = await apiClient.get('/account/profile');
         Object.assign(form, response.data);
+        form.newPassword = ''; // Xóa trắng mật khẩu mỗi lần load lại form
     } catch (error) {
         console.error('Lỗi tải hồ sơ:', error);
     }
@@ -50,11 +55,26 @@ const fetchProfile = async () => {
 const saveProfile = async () => {
     loading.value = true;
     try {
-        await apiClient.put('/account/profile', form);
+        // 1. Cập nhật thông tin hồ sơ cơ bản
+        await apiClient.put('/account/profile', {
+            fullname: form.fullname,
+            phone: form.phone,
+            email: form.email // Phải gửi email đi dù bị disabled để Backend nhận diện
+        });
+        
+        // 2.  Nếu người dùng có nhập mật khẩu mới -> Gọi API thiết lập mật khẩu
+        if (form.newPassword && form.newPassword.trim().length > 0) {
+            await apiClient.post('/account/setup-password', {
+                newPassword: form.newPassword
+            });
+        }
         
         // Cập nhật ngay tên hiển thị trên Header (không cần F5)
         const updatedUser = { ...authStore.user, ...form };
         authStore.login(updatedUser, authStore.token);
+
+        // Xóa trắng ô mật khẩu sau khi lưu thành công
+        form.newPassword = '';
 
         await Swal.fire({
             icon: 'success',
@@ -65,10 +85,25 @@ const saveProfile = async () => {
         });
     } catch (error) {
         console.error('Lỗi cập nhật:', error);
-        Swal.fire('Thất bại', 'Có lỗi xảy ra khi lưu hồ sơ.', 'error');
+        
+        // Bắt lỗi an toàn cho SweetAlert
+        let errorMessage = 'Có lỗi xảy ra khi lưu hồ sơ.';
+        if (error.response && error.response.data) {
+            if (typeof error.response.data === 'string') {
+                errorMessage = error.response.data;
+            } else if (error.response.data.message) {
+                errorMessage = error.response.data.message;
+            }
+        }
+        Swal.fire('Thất bại', errorMessage, 'error');
     } finally {
         loading.value = false;
     }
+};
+
+//  Hàm Toggle ẩn/hiện mật khẩu
+const togglePasswordVisibility = () => {
+    showPassword.value = !showPassword.value;
 };
 
 // --- METHODS: ADDRESS ---
@@ -79,7 +114,6 @@ const fetchAddresses = async () => {
         addresses.value = res.data;
     } catch (error) {
         console.error("Lỗi tải địa chỉ:", error);
-        // Lỗi 500 sẽ được api.js bắt và hiện thông báo chung
     }
 };
 
@@ -206,27 +240,55 @@ onMounted(async () => {
                     <div class="card-body p-4">
                         <form @submit.prevent="saveProfile">
                             <div class="row g-3">
+                                
+                                <div class="col-12 mb-2">
+                                    <div class="alert alert-info py-2 mb-0 d-flex align-items-center">
+                                        <i class="bi bi-info-circle-fill me-2 fs-5"></i>
+                                        <small>Đây là tài khoản định danh của bạn. Hãy sử dụng <b>Email</b> để đăng nhập vào những lần sau.</small>
+                                    </div>
+                                </div>
+
                                 <div class="col-md-6">
-                                    <label class="form-label text-muted small fw-bold">TÊN ĐĂNG NHẬP</label>
-                                    <input type="text" class="form-control bg-light" v-model="form.username" readonly disabled>
+                                    <label class="form-label text-muted small fw-bold">TÊN ĐĂNG NHẬP (KHÔNG THỂ ĐỔI)</label>
+                                    <input type="text" class="form-control bg-light text-secondary" v-model="form.username" disabled>
                                 </div>
                                 <div class="col-md-6">
-                                    <label class="form-label text-muted small fw-bold">EMAIL</label>
-                                    <input type="email" class="form-control bg-light" v-model="form.email" readonly disabled>
+                                    <label class="form-label text-muted small fw-bold">EMAIL (DÙNG ĐỂ ĐĂNG NHẬP)</label>
+                                    <input type="email" class="form-control bg-light text-secondary" v-model="form.email" disabled>
                                 </div>
-                                <div class="col-md-6">
+                                
+                                <div class="col-12 mt-4">
+                                    <hr class="text-muted opacity-25 m-0">
+                                </div>
+
+                                <div class="col-md-6 mt-4">
                                     <label class="form-label fw-bold">Họ và tên <span class="text-danger">*</span></label>
                                     <input type="text" class="form-control" v-model="form.fullname" required placeholder="Nhập họ tên đầy đủ">
                                 </div>
-                                <div class="col-md-6">
+                                <div class="col-md-6 mt-4">
                                     <label class="form-label fw-bold">Số điện thoại</label>
                                     <input type="tel" class="form-control" v-model="form.phone" placeholder="Số điện thoại liên lạc">
                                 </div>
+
+                                <div class="col-md-6 mt-4">
+                                    <label class="form-label fw-bold text-success">Thiết lập mật khẩu mới</label>
+                                    <div class="input-group">
+                                        <input :type="showPassword ? 'text' : 'password'" 
+                                               class="form-control border-success" 
+                                               v-model="form.newPassword" 
+                                               placeholder="Nhập mật khẩu nếu muốn đổi...">
+                                        <button class="btn btn-outline-success" type="button" @click="togglePasswordVisibility">
+                                            <i class="bi" :class="showPassword ? 'bi-eye-slash-fill' : 'bi-eye-fill'"></i>
+                                        </button>
+                                    </div>
+                                    <small class="text-muted mt-1 d-block">Bỏ trống nếu không muốn đổi mật khẩu.</small>
+                                </div>
                             </div>
 
-                            <div class="mt-4 d-flex justify-content-end">
+                            <div class="mt-5 d-flex justify-content-end">
                                 <button type="submit" class="btn btn-primary px-4 fw-bold shadow-sm" :disabled="loading">
                                     <span v-if="loading" class="spinner-border spinner-border-sm me-2"></span>
+                                    <i class="bi bi-save me-1" v-else></i>
                                     Lưu Thay Đổi
                                 </button>
                             </div>
@@ -234,11 +296,8 @@ onMounted(async () => {
                         
                         <hr class="my-4">
                         <div class="d-flex justify-content-center gap-3 flex-wrap">
-                            <router-link to="/auth/change-password" class="btn btn-outline-secondary btn-sm">
-                                <i class="bi bi-key me-1"></i> Đổi mật khẩu
-                            </router-link>
-                            <router-link to="/order-history" class="btn btn-outline-success btn-sm">
-                                <i class="bi bi-bag-check me-1"></i> Đơn hàng đã đặt
+                            <router-link to="/order-history" class="btn btn-outline-success btn-sm px-4">
+                                <i class="bi bi-bag-check me-1"></i> Xem đơn hàng đã đặt
                             </router-link>
                         </div>
                     </div>

@@ -26,6 +26,7 @@ const form = reactive({
     supplier_id: '',
     account_username: 'Admin',
     notes: '',
+    import_date: new Date().toISOString().split('T')[0],
     details: []
 });
 
@@ -48,26 +49,30 @@ onMounted(async () => {
     suppliers.value = (await supplierService.getAll()).data;
     products.value = (await productService.getAll()).data;
 });
-    
+ 
     //                                code mới của tuyến 
         const loadImports = async () => {
+    try {
         const res = await importService.getAll({
-            keyword: filters.keyword || null,
-            startDate: filters.startDate || null,
-            endDate: filters.endDate || null
+            keyword: filters.keyword || undefined,
+            startDate: filters.startDate || undefined,
+            endDate: filters.endDate || undefined
         });
+
         imports.value = res.data;
-    };
+    } catch (error) {
+        console.error("Lỗi tìm kiếm:", error);
+    }
+};
 
 //                                           code mới của tuyến
-watch(filters, () => {
-    loadImports();
-}, { deep: true });
 
-const resetFilters = () => {
+const resetFilters = async () => {
     filters.keyword = '';
     filters.startDate = '';
     filters.endDate = '';
+
+    await loadImports(); // load lại toàn bộ danh sách
 };
 
 // --- LOGIC TÍNH TOÁN ---
@@ -108,11 +113,12 @@ const removeDetailRow = (index) => {
             supplierId: Number(form.supplier_id),
             accountUsername: form.account_username,
             notes: form.notes,
+            importDate: form.import_date,
             totalAmount: formTotalAmount.value,
             details: form.details.map(d => ({
-            productId: Number(d.product_id),
-            quantity: Number(d.quantity),
-            unitPrice: Number(d.unit_price)
+                productId: Number(d.product_id),
+                quantity: Number(d.quantity),
+                unitPrice: Number(d.unit_price)
             }))
         };
 
@@ -130,7 +136,39 @@ const removeDetailRow = (index) => {
     const viewDetail = async (item) => {
     const res = await importService.getById(item.id);
     selectedImport.value = res.data;
+    console.log("DETAIL DATA:", res.data);
     detailModal.value.show();
+    
+};
+const getSupplierName = (id) => {
+    const s = suppliers.value.find(sp => sp.id === id);
+    return s ? s.name : '';
+};
+const getProductName = (id) => {
+    const p = products.value.find(pr => pr.id === id);
+    return p ? p.name : '';
+};
+const deleteImport = async (id) => {
+    try {
+        const confirm = await Swal.fire({
+            title: "Bạn chắc chắn?",
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonText: "Xóa",
+            cancelButtonText: "Hủy"
+        });
+
+        if (!confirm.isConfirmed) return;
+
+        await importService.remove(id);
+
+        Swal.fire("Đã xóa!", "", "success");
+        await loadImports();
+
+    } catch (error) {
+        console.error(error);
+        Swal.fire("Lỗi!", "Không thể xóa", "error");
+    }
 };
 
 </script>
@@ -150,11 +188,15 @@ const removeDetailRow = (index) => {
                     <div class="col-md-4">
                         <label class="form-label small fw-bold text-muted">Từ khóa</label>
                         <div class="input-group">
-                            <span class="input-group-text bg-white border-end-0"><i class="bi bi-search text-secondary"></i></span>
-                            <input type="text" class="form-control border-start-0 ps-0" 
-                                   v-model="filters.keyword" 
-                                   placeholder="Tìm mã phiếu, NCC, nhân viên...">
+                            <span class="input-group-text bg-white border-end-0">
+                        <i class="bi bi-search text-secondary"></i>
+                            </span>
+                            <input type="text"
+                            class="form-control border-start-0 ps-0"
+                            v-model="filters.keyword"
+                            placeholder="Tìm mã phiếu, NCC...">
                         </div>
+                        
                     </div>
                     <div class="col-md-3">
                         <label class="form-label small fw-bold text-muted">Từ ngày</label>
@@ -165,10 +207,18 @@ const removeDetailRow = (index) => {
                         <input type="date" class="form-control" v-model="filters.endDate">
                     </div>
                     <div class="col-md-2 d-flex align-items-end">
-                        <button class="btn btn-outline-secondary w-100" @click="resetFilters">
-                            <i class="bi bi-arrow-counterclockwise me-1"></i> Đặt lại
-                        </button>
-                    </div>
+    <div class="w-100">
+        <button class="btn btn-primary w-100 mb-2"
+                @click="loadImports">
+            <i class="bi bi-search me-1"></i> Tìm kiếm
+        </button>
+
+        <button class="btn btn-outline-secondary w-100"
+                @click="resetFilters">
+            <i class="bi bi-arrow-counterclockwise me-1"></i> Đặt lại
+        </button>
+    </div>
+</div>
                 </div>
             </div>
         </div>
@@ -191,32 +241,35 @@ const removeDetailRow = (index) => {
     <td>
       #PN{{ item.id }}
     </td>
-
     <td>
       {{ item.importDate 
           ? new Date(item.importDate).toLocaleDateString('vi-VN') 
           : '' }}
     </td>
-
     <td>
-      NCC #{{ item.supplierId }}
+      {{ getSupplierName(item.supplierId) }}
     </td>
-
     <td>
       {{ item.accountUsername }}
     </td>
-
     <td>
       {{ item.totalAmount 
           ? Number(item.totalAmount).toLocaleString('vi-VN') + ' đ' 
           : '0 đ' }}
     </td>
+    <td class="text-center">
+    <div class="d-flex justify-content-center gap-2">
+        <button class="btn btn-info btn-sm"
+                @click="viewDetail(item)">
+            Chi tiết
+        </button>
 
-    <td>
-      <button class="btn btn-info btn-sm">
-        Chi tiết
-      </button>
-    </td>
+        <button class="btn btn-danger btn-sm"
+                @click="deleteImport(item.id)">
+            Xóa
+        </button>
+    </div>
+</td>
   </tr>
 </tbody>
                 </table>
@@ -250,6 +303,10 @@ const removeDetailRow = (index) => {
                                         <div class="col-md-4">
                                             <label class="form-label fw-bold small text-muted">Ghi chú</label>
                                             <input type="text" class="form-control" v-model="form.notes" placeholder="VD: Nhập hàng đợt 1">
+                                        </div>
+                                        <div class="col-md-4">
+                                            <label class="form-label fw-bold small text-muted">Ngày nhập</label>
+                                            <input type="date" class="form-control" v-model="form.import_date">
                                         </div>
                                     </div>
                                 </div>
@@ -336,11 +393,17 @@ const removeDetailRow = (index) => {
                         <div class="row mb-4 border-bottom pb-3">
                             <div class="col-md-6">
                                 <p class="mb-1 text-muted small">Nhà cung cấp:</p>
-                                <h6 class="fw-bold">{{ selectedImport.supplier_name }}</h6>
+                                <h6 class="fw-bold">
+                                    {{ selectedImport?.supplierId
+                                    ? getSupplierName(selectedImport.supplierId)
+                                    : '' }}
+                                </h6>
                             </div>
                             <div class="col-md-6 text-md-end">
                                 <p class="mb-1 text-muted small">Thời gian nhập:</p>
-                                <h6 class="fw-bold">{{ selectedImport.import_date }}</h6>
+                                <h6 class="fw-bold">{{ selectedImport.importDate 
+                                        ? new Date(selectedImport.importDate).toLocaleString('vi-VN')
+                                        : '' }}</h6>
                             </div>
                             <div class="col-12 mt-2">
                                 <p class="mb-1 text-muted small">Ghi chú:</p>
@@ -358,18 +421,26 @@ const removeDetailRow = (index) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr v-for="(d, i) in selectedImport.details" :key="i">
-                                    <td class="text-center">{{ i + 1 }}</td>
-                                    <td>{{ d.product_name }}</td>
-                                    <td class="text-center">{{ d.quantity }}</td>
-                                    <td class="text-end">{{ formatCurrency(d.unit_price) }}</td>
-                                    <td class="text-end fw-bold">{{ formatCurrency(d.total) }}</td>
-                                </tr>
-                            </tbody>
+                            <tr v-for="(d, i) in selectedImport.details" :key="i">
+                            <td class="text-center">{{ i + 1 }}</td>
+                            <td>
+                                {{ getProductName(d.productId) }}
+                            </td>
+                            <td class="text-center">
+                                {{ d.quantity }}
+                            </td>
+                            <td class="text-end">
+                                {{ formatCurrency(d.unitPrice) }}
+                            </td>
+                            <td class="text-end fw-bold">
+                                {{ formatCurrency(d.quantity * d.unitPrice) }}
+                            </td>
+                        </tr>
+                        </tbody>
                             <tfoot>
                                 <tr>
                                     <td colspan="4" class="text-end fw-bold pt-3">TỔNG CỘNG</td>
-                                    <td class="text-end fw-bold text-danger fs-5">{{ formatCurrency(selectedImport.total_amount) }}</td>
+                                    <td class="text-end fw-bold text-danger fs-5">{{ formatCurrency(selectedImport.totalAmount) }}</td>
                                 </tr>
                             </tfoot>
                         </table>

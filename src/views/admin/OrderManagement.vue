@@ -52,7 +52,7 @@ const statusOptions = [
     { value: 'COMPLETED', label: 'Hoàn tất đơn' },
     { value: 'CANCEL_REQUESTED', label: 'Chờ xác nhận hủy' },
     { value: 'CANCELLED_REFUNDED', label: 'Hủy thành công - Đã hoàn tiền' },
-    { value: 'CANCELLED', label: 'Đã hủy' },
+    { value: 'CANCELLED', label: 'Yêu cầu hủy đơn hàng' },
     { value: 'RETURN_REQUESTED', label: 'Yêu cầu trả hàng' },
     { value: 'HIDDEN', label: 'Đã ẩn đơn hàng' }
 ];
@@ -107,14 +107,13 @@ const setQuickFilter = (type) => {
     let end = new Date();
 
     if (type === 'today') {
-        // Hôm nay: start và end mặc định là now, chỉ cần format lại khi gọi API
+        // Hôm nay
     } else if (type === 'yesterday') {
         start.setDate(now.getDate() - 1);
         end.setDate(now.getDate() - 1);
     } else if (type === '7days') {
         start.setDate(now.getDate() - 7);
     } else {
-        // Reset bộ lọc
         filter.status = 'ALL';
         filter.paymentMethod = 'ALL';
         filter.startDate = '';
@@ -182,7 +181,6 @@ const updateOrderStatus = async () => {
         const payload = { status: updateForm.status, sendEmail: updateForm.sendEmail.toString(), message: updateForm.message };
         await apiClient.put(`/admin/orders/${selectedOrder.id}/status`, payload);
         
-        // Cập nhật UI
         const index = orders.value.findIndex(o => o.id === selectedOrder.id);
         if (index !== -1) orders.value[index].status = updateForm.status;
         
@@ -209,9 +207,36 @@ const deleteOrder = async (orderId) => {
     }
 };
 
+// ---  LOGIC CỘNG LẠI TỒN KHO THỦ CÔNG ---
+const restockOrder = async (order) => {
+    const result = await Swal.fire({
+        title: 'Cộng lại tồn kho?',
+        text: `Bạn có chắc chắn muốn cộng lại số lượng sản phẩm của đơn hàng #DH-${order.id} vào kho không?`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonColor: '#198754',
+        cancelButtonColor: '#6c757d',
+        confirmButtonText: '<i class="bi bi-box-arrow-in-down me-1"></i> Đồng ý',
+        cancelButtonText: 'Hủy'
+    });
+
+    if (result.isConfirmed) {
+        loading.value = true;
+        try {
+            const res = await apiClient.put(`/admin/orders/${order.id}/restock`);
+            Swal.fire('Thành công!', res.data || 'Đã cộng lại số lượng vào kho.', 'success');
+            fetchOrders(); // Tải lại danh sách để cập nhật Ghi chú và ẩn nút
+        } catch (err) {
+            console.error(err);
+            Swal.fire('Lỗi', err.response?.data || 'Không thể thao tác cộng kho.', 'error');
+        } finally {
+            loading.value = false;
+        }
+    }
+};
+
 // --- LOGIC IN HÓA ĐƠN PDF ---
 
-// Mở modal in LẺ (cho 1 đơn)
 const openPrintModal = (order) => {
     printConfig.orderId = order.id;
     printConfig.isBulk = false;
@@ -219,7 +244,6 @@ const openPrintModal = (order) => {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('printModal')).show();
 };
 
-// Mở modal in HÀNG LOẠT (cho nhiều đơn)
 const openBulkPrintModal = () => {
     if (selectedIds.value.length === 0) {
         Swal.fire('Chưa chọn đơn hàng', 'Vui lòng tích chọn ít nhất 1 đơn hàng để in.', 'warning');
@@ -230,7 +254,6 @@ const openBulkPrintModal = () => {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('printModal')).show();
 }
 
-// Thực hiện tải file PDF
 const downloadInvoice = async () => {
     try {
         bootstrap.Modal.getInstance(document.getElementById('printModal')).hide();
@@ -246,7 +269,6 @@ const downloadInvoice = async () => {
         let fileName = "";
 
         if (printConfig.isBulk) {
-            // API IN NHIỀU
             const idsString = selectedIds.value.join(',');
             response = await apiClient.get(`/admin/orders/export-pdf/bulk`, {
                 params: { ids: idsString, paperSize: printConfig.paperSize },
@@ -254,7 +276,6 @@ const downloadInvoice = async () => {
             });
             fileName = `HoaDon_TongHop_${printConfig.paperSize}.pdf`;
         } else {
-            // API IN LẺ
             response = await apiClient.get(`/admin/orders/${printConfig.orderId}/export-pdf`, {
                 params: { paperSize: printConfig.paperSize },
                 responseType: 'blob' 
@@ -262,7 +283,6 @@ const downloadInvoice = async () => {
             fileName = `HoaDon_DH${printConfig.orderId}_${printConfig.paperSize}.pdf`;
         }
 
-        // Tạo link tải ảo
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
@@ -270,17 +290,15 @@ const downloadInvoice = async () => {
         document.body.appendChild(link);
         link.click();
         
-        // Dọn dẹp
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
 
-        // Cập nhật trạng thái "Đã in" trên giao diện
         if (printConfig.isBulk) {
             selectedIds.value.forEach(id => {
                 const index = orders.value.findIndex(o => o.id === id);
                 if (index !== -1) orders.value[index].isPrinted = true;
             });
-            selectedIds.value = []; // Reset sau khi in xong
+            selectedIds.value = []; 
             selectAll.value = false;
         } else {
             const index = orders.value.findIndex(o => o.id === printConfig.orderId);
@@ -429,11 +447,19 @@ onMounted(fetchOrders);
                   {{ translateStatus(order.status) }}
                 </span>
               </td>
-              <td class="text-end pe-3">
-                <button class="btn btn-primary btn-sm me-1 shadow-sm" @click="viewDetails(order.id)" title="Xem"><i class="bi bi-eye"></i></button>
-                <button class="btn btn-dark btn-sm me-1 shadow-sm" @click="openPrintModal(order)" title="In"><i class="bi bi-printer-fill"></i></button>
-                <button class="btn btn-warning btn-sm me-1 shadow-sm" @click="openStatusModal(order)" title="Sửa"><i class="bi bi-pencil-square"></i></button>
-                <button v-if="canDelete(order.status)" class="btn btn-outline-danger btn-sm shadow-sm" @click="deleteOrder(order.id)"><i class="bi bi-trash"></i></button>
+              <td class="text-end pe-3 text-nowrap">
+                <button class="btn btn-primary btn-sm me-1 shadow-sm" @click="viewDetails(order.id)" title="Xem chi tiết"><i class="bi bi-eye"></i></button>
+                <button class="btn btn-dark btn-sm me-1 shadow-sm" @click="openPrintModal(order)" title="In hóa đơn"><i class="bi bi-printer-fill"></i></button>
+                <button class="btn btn-warning btn-sm me-1 shadow-sm" @click="openStatusModal(order)" title="Cập nhật trạng thái"><i class="bi bi-pencil-square"></i></button>
+                
+                <button v-if="order.status === 'CANCELLED_REFUNDED' && !(order.notes || '').includes('(Đã cộng lại kho)')" 
+                        class="btn btn-success btn-sm me-1 shadow-sm" 
+                        @click="restockOrder(order)" 
+                        title="Cộng lại hàng vào kho">
+                    <i class="bi bi-box-arrow-in-down"></i>
+                </button>
+
+                <button v-if="canDelete(order.status)" class="btn btn-outline-danger btn-sm shadow-sm" @click="deleteOrder(order.id)" title="Xóa đơn hàng"><i class="bi bi-trash"></i></button>
               </td>
             </tr>
             <tr v-if="orders.length === 0">
@@ -569,5 +595,5 @@ onMounted(fetchOrders);
 .table thead th { font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
 .badge { font-weight: 600; font-size: 0.8rem; }
 .card { border-radius: 12px; }
-.table-active { background-color: #f0f8ff !important; } /* Highlight dòng được chọn */
+.table-active { background-color: #f0f8ff !important; } 
 </style>
