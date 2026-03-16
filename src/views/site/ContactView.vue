@@ -26,16 +26,15 @@ const loadContactInfo = async () => {
     try {
         const response = await contactService.getContactInfo();
         const data = response.data;
-        // THAY ĐỔI: Cập nhật cả mapUrl từ database
+        // SỬA: Đọc từ mapIframe thay vì mapUrl
         contactInfo.value = {
             address: data.address || contactInfo.value.address,
             phone: data.phone || contactInfo.value.phone,
             email: data.email || contactInfo.value.email,
-            mapUrl: data.mapUrl || '' // THÊM MỚI: lấy mapUrl từ database
+            mapUrl: data.mapIframe || '' // ĐỔI: mapUrl -> mapIframe
         };
     } catch (error) {
         console.error('Lỗi tải thông tin liên hệ:', error);
-        // Giữ nguyên giá trị mặc định nếu lỗi
     }
 };
 
