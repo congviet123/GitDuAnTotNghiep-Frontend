@@ -28,7 +28,8 @@ const loadContactInfo = async () => {
         contactData.address = data.address || "";
         contactData.phone = data.phone || "";
         contactData.email = data.email || "";
-        contactData.mapUrl = data.mapUrl || ""; // THÊM MỚI: lấy mapUrl từ database
+        // SỬA: Đọc từ mapIframe thay vì mapUrl
+        contactData.mapUrl = data.mapIframe || ""; // ĐỔI: mapUrl -> mapIframe
         
     } catch (error) {
         console.error("Lỗi tải dữ liệu:", error);
@@ -56,12 +57,12 @@ const saveContactInfo = async () => {
     
     loading.save = true;
     try {
-        // THAY ĐỔI: gửi cả 4 trường lên API (bao gồm mapUrl)
+        // SỬA: Gửi mapIframe thay vì mapUrl
         const payload = {
             address: contactData.address,
             phone: contactData.phone,
             email: contactData.email,
-            mapUrl: contactData.mapUrl // THÊM MỚI: gửi mapUrl lên server
+            mapIframe: contactData.mapUrl // ĐỔI: mapUrl -> mapIframe
         };
         
         await contactService.updateContactInfo(payload);

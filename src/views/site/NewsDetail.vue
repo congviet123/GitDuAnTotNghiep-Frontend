@@ -94,13 +94,60 @@ const toggleLike = async () => {
   }
 };
 
-const handleShare = async () => {
+// --- SHARE ---
+const showShareModal = ref(false);
+
+const recordShare = async (platform, receiverEmail = null) => {
+  if (!authStore.isAuthenticated) return;
+  try {
+    await apiClient.post(`/news-engagement/share/${articleId}`, {
+      platform,
+      newsUrl: window.location.href,
+      receiverEmail: receiverEmail || null,
+    });
+  } catch (err) {
+    console.error('Lỗi ghi nhận chia sẻ', err);
+  }
+};
+
+const shareCopyLink = async () => {
   try {
     await navigator.clipboard.writeText(window.location.href);
-    if (authStore.isAuthenticated)
-      await apiClient.post(`/news-engagement/share/${articleId}`, null, { params: { platform: 'copy-link' } });
+    await recordShare('COPY_LINK');
+    showShareModal.value = false;
     Swal.fire({ icon: 'success', title: 'Đã sao chép liên kết!', timer: 2000, showConfirmButton: false });
   } catch {}
+};
+
+
+const shareEmail = async () => {
+  if (!authStore.isAuthenticated) {
+    Swal.fire({
+      title: 'Yêu cầu đăng nhập', text: 'Bạn cần đăng nhập để chia sẻ qua email!',
+      icon: 'info', showCancelButton: true,
+      confirmButtonText: 'Đăng nhập', cancelButtonText: 'Hủy'
+    }).then(r => { if (r.isConfirmed) router.push('/login'); });
+    showShareModal.value = false;
+    return;
+  }
+  showShareModal.value = false;
+  const { value: email, isConfirmed } = await Swal.fire({
+    title: 'Chia sẻ qua Email',
+    input: 'email',
+    inputLabel: 'Nhập địa chỉ email người nhận',
+    inputPlaceholder: 'example@email.com',
+    showCancelButton: true,
+    confirmButtonText: 'Gửi',
+    cancelButtonText: 'Hủy',
+    inputValidator: (v) => !v ? 'Vui lòng nhập email!' : undefined,
+  });
+  if (!isConfirmed || !email) return;
+  try {
+    await recordShare('EMAIL', email);
+    Swal.fire({ icon: 'success', title: 'Đã gửi email chia sẻ!', timer: 2000, showConfirmButton: false });
+  } catch {
+    Swal.fire('Lỗi', 'Không thể gửi email. Vui lòng thử lại.', 'error');
+  }
 };
 
 // ---------- ROOT COMMENTS ----------
@@ -308,9 +355,29 @@ onUnmounted(() => {
             <i class="bi" :class="isLiked ? 'bi-heart-fill' : 'bi-heart'"></i>
             {{ isLiked ? 'Đã thích' : 'Yêu thích' }} ({{ likeCount }})
           </button>
-          <button @click="handleShare" class="btn btn-outline-primary rounded-pill px-4">
+          <button @click="showShareModal = true" class="btn btn-outline-primary rounded-pill px-4">
             <i class="bi bi-share-fill"></i> Chia sẻ
           </button>
+        </div>
+
+        <!-- Share Modal -->
+        <div v-if="showShareModal" class="share-modal-backdrop" @click.self="showShareModal = false">
+          <div class="share-modal">
+            <div class="share-modal-header">
+              <h6 class="mb-0 fw-bold"><i class="bi bi-share-fill me-2 text-primary"></i>Chia sẻ bài viết</h6>
+              <button class="btn-close btn-sm" @click="showShareModal = false"></button>
+            </div>
+            <div class="share-modal-body">
+              <button class="share-btn" @click="shareCopyLink">
+                <i class="bi bi-link-45deg"></i>
+                <span>Sao chép liên kết</span>
+              </button>
+              <button class="share-btn share-btn-email" @click="shareEmail">
+                <i class="bi bi-envelope-fill"></i>
+                <span>Email</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- ===== COMMENT SECTION ===== -->
@@ -492,4 +559,56 @@ onUnmounted(() => {
   from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ---- Share Modal ---- */
+.share-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1050;
+  animation: fadeIn .2s ease;
+}
+.share-modal {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,.18);
+  width: 320px;
+  max-width: 95vw;
+  overflow: hidden;
+}
+.share-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #f0f0f0;
+}
+.share-modal-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: .75rem;
+  padding: 1.25rem;
+}
+.share-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .4rem;
+  padding: .75rem .5rem;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 12px;
+  background: #fafafa;
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  color: #333;
+  transition: all .18s;
+}
+.share-btn i { font-size: 1.4rem; }
+.share-btn:hover { background: #f0f4ff; border-color: #4f8ef7; color: #4f8ef7; transform: translateY(-2px); }
+.share-btn-email i { color: #ea4335; }
+.share-btn-email:hover { border-color: #ea4335; color: #ea4335; background: #fdecea; }
 </style>
