@@ -1,4 +1,6 @@
 <script setup>
+// code mới của tuyến
+import axios from 'axios';
 import { ref, onMounted, computed, watch, nextTick } from 'vue';
 import Chart from 'chart.js/auto';
 
@@ -13,20 +15,43 @@ const availableYears = ref(Array.from({length: 6}, (_, i) => (2023 + i).toString
 const revYear = ref(new Date().getFullYear().toString());
 const revMonth = ref('all');
 const revenueChartInstance = ref(null);
+const forecastRevenue = ref(0);
+const totalRevenue = ref(0)
 
 const mockRevenue = {
     yearly: [50, 60, 70, 60, 50, 60, 70, 80, 90, 100, 110, 120], // 12 tháng
     monthly: [15, 20, 18, 25] // 4 tuần
 };
 
-const yearlyRevenueTotal = computed(() => {
-    // Logic tính tổng tiền để hiển thị text
-    let total = 0;
-    if (revMonth.value === 'all') total = mockRevenue.yearly.reduce((a, b) => a + b, 0);
-    else total = mockRevenue.monthly.reduce((a, b) => a + b, 0);
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(total * 1000000);
-});
 
+// code mơi của tuyến tính tổng doanh thu theo tháng 
+// và năm
+// const yearlyRevenueTotal = computed(() => {
+//     if (revMonth.value === 'all') {
+//         const total = (mockRevenue.yearly || [])
+//             .reduce((a,b)=> a + Number(b || 0),0)
+//         return new Intl.NumberFormat('vi-VN',{
+//             style:'currency',
+//             currency:'VND'
+//         }).format(total)
+//     } else {
+//         const total = (mockRevenue.monthly || [])
+//             .reduce((a,b)=> a + Number(b || 0),0)
+//         return new Intl.NumberFormat('vi-VN',{
+//             style:'currency',
+//             currency:'VND'
+//         }).format(total)
+//     }
+
+// })
+
+
+const yearlyRevenueTotal = computed(() => {
+    return new Intl.NumberFormat('vi-VN',{
+        style:'currency',
+        currency:'VND'
+    }).format(totalRevenue.value)
+})
 // ==========================================
 // 2. SẢN PHẨM (Doughnut Chart)
 // ==========================================
@@ -34,17 +59,15 @@ const prodYear = ref(new Date().getFullYear().toString());
 const prodMonth = ref('all');
 const bestSellingChartInstance = ref(null);
 const slowSellingChartInstance = ref(null);
-
-const mockProduct = {
-    yearly: {
-        best: { labels: ['Nho Xanh', 'Táo Envy', 'Cam Mỹ'], data: [3000, 2500, 1800] },
-        slow: { labels: ['Chanh dây', 'Cóc', 'Khế'], data: [100, 80, 50] }
-    },
-    monthly: {
-        best: { labels: ['Cherry', 'Dâu Tây', 'Kiwi'], data: [250, 180, 120] },
-        slow: { labels: ['Chuối', 'Ổi', 'Xoài'], data: [15, 10, 5] }
-    }
-};
+// biến dữ liệu của tuyến
+const productData = ref({
+    best: { labels: [], data: [] },
+    slow: { labels: [], data: [] }
+})
+const orderData = ref({
+    labels: [],
+    data: []
+})
 
 // ==========================================
 // 3. ĐƠN HÀNG (Doughnut Chart)
@@ -89,10 +112,10 @@ const renderRevenueChart = () => {
     let labels, data;
     if (revMonth.value === 'all') {
         labels = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9', 'T10', 'T11', 'T12'];
-        data = mockRevenue.yearly;
+        data = mockRevenue.yearly.map(v => Number(v));
     } else {
         labels = ['Tuần 1', 'Tuần 2', 'Tuần 3', 'Tuần 4'];
-        data = mockRevenue.monthly;
+        data = mockRevenue.monthly.map(v => Number(v));
     }
 
     revenueChartInstance.value = new Chart(ctx, {
@@ -115,49 +138,58 @@ const renderRevenueChart = () => {
 };
 
 const renderProductCharts = () => {
-    // Determine data source based on Month filter
-    const source = prodMonth.value === 'all' ? mockProduct.yearly : mockProduct.monthly;
 
-    // Best Selling
+    // ===== BÁN CHẠY =====
     const ctxBest = document.getElementById('bestSellingChart');
     if (ctxBest) {
-        if (bestSellingChartInstance.value) bestSellingChartInstance.value.destroy();
+
+        if (bestSellingChartInstance.value)
+            bestSellingChartInstance.value.destroy();
+
         bestSellingChartInstance.value = new Chart(ctxBest, {
             type: 'doughnut',
             data: {
-                labels: source.best.labels,
-                datasets: [{ 
-                    data: source.best.data, 
-                    backgroundColor: ['#198754', '#20c997', '#0dcaf0'], 
-                    hoverOffset: 4 
+                labels: productData.value.best.labels,
+                datasets: [{
+                    data: productData.value.best.data,
+                    backgroundColor: ['#198754', '#20c997', '#0dcaf0']
                 }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            options:{
+                responsive:true,
+                maintainAspectRatio:false,
+                plugins:{ legend:{ position:'bottom' } }
+            }
         });
     }
 
-    // Slow Selling
+    // ===== TỒN KHO =====
     const ctxSlow = document.getElementById('slowSellingChart');
     if (ctxSlow) {
-        if (slowSellingChartInstance.value) slowSellingChartInstance.value.destroy();
+
+        if (slowSellingChartInstance.value)
+            slowSellingChartInstance.value.destroy();
+
         slowSellingChartInstance.value = new Chart(ctxSlow, {
             type: 'doughnut',
             data: {
-                labels: source.slow.labels,
-                datasets: [{ 
-                    data: source.slow.data, 
-                    backgroundColor: ['#dc3545', '#fd7e14', '#ffc107'], 
-                    hoverOffset: 4 
+                labels: productData.value.slow.labels,
+                datasets: [{
+                    data: productData.value.slow.data,
+                    backgroundColor: ['#dc3545','#fd7e14','#ffc107']
                 }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
+            options:{
+                responsive:true,
+                maintainAspectRatio:false,
+                plugins:{ legend:{ position:'bottom' } }
+            }
         });
     }
-};
+}
 
 const renderOrderChart = () => {
-    const source = orderMonth.value === 'all' ? mockOrder.yearly : mockOrder.monthly;
-    
+    const source = orderData.value;
     const ctxOrder = document.getElementById('orderChart');
     if (ctxOrder) {
         if (orderChartInstance.value) orderChartInstance.value.destroy();
@@ -207,21 +239,101 @@ const renderNewsCharts = () => {
     }
 };
 
-// --- WATCHERS ---
-watch([revYear, revMonth], renderRevenueChart);
-watch([prodYear, prodMonth], renderProductCharts);
-watch([orderYear, orderMonth], renderOrderChart);
-watch([newsYear, newsMonth], renderNewsCharts);
+// code mới của tuyến 
+const loadSalesData = async () => {
+    const baseUrl = "http://localhost:8080/api/dashboard-sales"
+    try{
+        if(revMonth.value === "all"){
+            const res = await axios.get(
+                `${baseUrl}/revenue/${revYear.value}`
+            )
+            mockRevenue.yearly = res.data.monthlyRevenue || []
+            forecastRevenue.value = res.data.forecast || 0
+            totalRevenue.value = res.data.totalRevenue || 0
+        }else{
+            const res = await axios.get(
+                `${baseUrl}/revenue/${revYear.value}/${revMonth.value}`
+            )
+            mockRevenue.monthly = res.data || []
+            totalRevenue.value = mockRevenue.monthly.reduce((a,b)=>a+Number(b||0),0)
+            forecastRevenue.value = 0
+        }
+        renderRevenueChart()
+    }catch(e){
+        console.error(e)
+    }
+}
 
-// --- INIT ---
-onMounted(() => {
-    nextTick(() => {
-        renderRevenueChart();
-        renderProductCharts();
-        renderOrderChart();
-        renderNewsCharts();
-    });
-});
+const loadProductData = async () => {
+
+    const baseUrl = "http://localhost:8080/api/dashboard-sales"
+
+    try{
+        const res = await axios.get(
+            `${baseUrl}/products/${prodYear.value}/${prodMonth.value}`
+        )
+        const best = res.data.filter(i => i.type === "best")
+        const slow = res.data.filter(i => i.type === "slow")
+        productData.value.best.labels = best.map(i => i.name)
+        productData.value.best.data = best.map(i => Number(i.value))
+        productData.value.slow.labels = slow.map(i => i.name)
+        productData.value.slow.data = slow.map(i => Number(i.value))
+        renderProductCharts()
+    }catch(e){
+        console.error(e)
+    }
+}
+
+// quản lý đơn 
+const loadOrderData = async () => {
+
+    const baseUrl = "http://localhost:8080/api/dashboard-sales"
+
+    try{
+        const res = await axios.get(
+            `${baseUrl}/orders/${orderYear.value}/${orderMonth.value}`
+        )
+
+        orderData.value = {
+            labels:['Hoàn tất','Đã hoàn tiền'],
+            data:[
+                res.data.completed || 0,
+                res.data.refunded || 0
+            ]
+        }
+
+        renderOrderChart()
+
+    }catch(e){
+        console.error(e)
+    }
+}
+
+
+
+
+// --- WATCHERS ---       code mới của tuyến phần của thiện tự sửa thêm vào
+watch([revYear,revMonth], loadSalesData);
+// Các phần lọc theo tháng/năm của News thì giữ nguyên code cũ 
+watch([prodYear, prodMonth], async ()=>{
+    await loadProductData()
+})
+watch([orderYear, orderMonth], loadOrderData);
+
+
+
+// --- INIT ---  code mới
+onMounted(async () => {
+    await loadSalesData()
+    await loadProductData()
+    await loadOrderData()
+    nextTick(()=>{
+        renderNewsCharts()
+    })
+
+})
+
+
 </script>
 
 <template>
@@ -262,15 +374,17 @@ onMounted(() => {
                             <i class="bi bi-wallet2 fs-1 opacity-50"></i>
                         </div>
                     </div>
-                    <div class="col-md-6">
+                    <!-- <div class="col-md-6">
                         <div class="alert alert-success mb-0 d-flex justify-content-between align-items-center">
                             <div>
                                 <small class="text-uppercase d-block">Dự báo tháng tới</small>
-                                <span class="fw-bold fs-4">150,000,000 ₫</span>
+                                <span class="fw-bold fs-4">
+                                    {{ new Intl.NumberFormat('vi-VN',{style:'currency',currency:'VND'}).format(forecastRevenue) }}
+                                </span>
                             </div>
                             <i class="bi bi-graph-up fs-1 opacity-50"></i>
                         </div>
-                    </div>
+                    </div> -->
                 </div>
                 <div style="height: 350px;">
                     <canvas id="revenueChart"></canvas>
