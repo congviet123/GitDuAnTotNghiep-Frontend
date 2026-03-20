@@ -50,7 +50,7 @@ const statusOptions = [
     { value: 'SHIPPED', label: 'Đang giao hàng' },
     { value: 'DELIVERED', label: 'Giao thành công' },
     { value: 'COMPLETED', label: 'Hoàn tất đơn' },
-    { value: 'CANCEL_REQUESTED', label: 'Chờ xác nhận hủy' },
+    { value: 'CANCEL_REQUESTED', label: 'Đã xác nhận hủy đơn hàng' },
     { value: 'CANCELLED_REFUNDED', label: 'Hủy thành công - Đã hoàn tiền' },
     { value: 'CANCELLED', label: 'Yêu cầu hủy đơn hàng' },
     { value: 'RETURN_REQUESTED', label: 'Yêu cầu trả hàng' },

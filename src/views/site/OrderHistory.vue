@@ -354,7 +354,7 @@ const translateStatus = (status) => {
         'PENDING': 'Đang chờ xử lý', 'CONFIRMED': 'Đã xác nhận', 'PREPARING': 'Đang chuẩn bị hàng',
         'SHIPPING': 'Đang vận chuyển', 'SHIPPED': 'Đang giao hàng', 'DELIVERED': 'Giao thành công',
         'COMPLETED': 'Hoàn tất', 'CANCELLED': 'Yêu cầu hủy đơn hàng', 'RETURN_REQUESTED': 'Yêu cầu hoàn trả',
-        'CANCELLED_REFUNDED': 'Đã hoàn tiền', 'PAID': 'Đã thanh toán', 'CANCEL_REQUESTED': 'Đang chờ xác nhận hủy'
+        'CANCELLED_REFUNDED': 'Đã hoàn tiền', 'PAID': 'Đã thanh toán', 'CANCEL_REQUESTED': 'Đã xác nhận hủy đơn hàng'
     };
     return map[status] || status;
 };
