@@ -4,44 +4,48 @@ import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
 
-// --- STATE ---
-const orders = ref([]);
-const loading = ref(false);
-const error = ref(null);
-const selectedIds = ref([]); // Danh sách ID các đơn hàng được chọn để in hàng loạt
-const selectAll = ref(false); // Trạng thái của checkbox "Chọn tất cả"
+// ============================================================================
+// 1. STATE QUẢN LÝ DỮ LIỆU
+// ============================================================================
+const orders = ref([]); // Lưu trữ danh sách đơn hàng lấy từ API
+const loading = ref(false); // Trạng thái tải dữ liệu (hiển thị spinner)
+const error = ref(null); // Lưu trữ thông báo lỗi nếu gọi API thất bại
 
-// --- TRẠNG THÁI BỘ LỌC ---
+// [TÍNH NĂNG IN HÀNG LOẠT]: Lưu trữ các ID đơn hàng được tích chọn
+const selectedIds = ref([]); 
+const selectAll = ref(false); // Trạng thái của ô checkbox tổng "Chọn tất cả"
+
+// [TÍNH NĂNG LỌC ĐƠN HÀNG]: Lưu trữ các tiêu chí lọc của Admin
 const filter = reactive({
-    status: 'ALL',
-    paymentMethod: 'ALL',
-    startDate: '',
-    endDate: '',
-    quickType: 'all'
+    status: 'ALL', // Lọc theo trạng thái (Mặc định lấy tất cả)
+    paymentMethod: 'ALL', // Lọc theo phương thức thanh toán
+    startDate: '', // Từ ngày
+    endDate: '', // Đến ngày
+    quickType: 'all' // Đánh dấu bộ lọc nhanh đang chọn (hôm nay, hôm qua...)
 });
 
-// Form cập nhật trạng thái đơn hàng
+// [TÍNH NĂNG CẬP NHẬT TRẠNG THÁI]: Form lưu dữ liệu khi Admin muốn đổi trạng thái đơn
 const updateForm = reactive({
-    status: '',
-    sendEmail: false,
-    message: ''
+    status: '', // Trạng thái mới muốn đổi sang
+    sendEmail: false, // Có gửi mail thông báo cho khách không?
+    message: '' // Nội dung email gửi cho khách
 });
 
-// Cấu hình in hóa đơn
+// [TÍNH NĂNG IN HÓA ĐƠN]: Cấu hình thông số in PDF
 const printConfig = reactive({
-    orderId: null,      // ID đơn hàng nếu in lẻ
-    isBulk: false,      // Cờ đánh dấu in hàng loạt hay in lẻ
-    paperSize: 'A4'     // Khổ giấy mặc định
+    orderId: null,      // ID đơn hàng nếu in lẻ 1 đơn
+    isBulk: false,      // Cờ phân biệt in hàng loạt (true) hay in lẻ (false)
+    paperSize: 'A4'     // Khổ giấy in mặc định
 });
 
-// Đơn hàng đang được chọn để xem chi tiết hoặc cập nhật
+// Lưu trữ dữ liệu của 1 đơn hàng khi Admin bấm xem chi tiết hoặc cập nhật
 const selectedOrder = reactive({
     id: null, account: {}, totalAmount: 0, createDate: null,
     orderDetails: [], status: '', shippingAddress: '', notes: '', paymentMethod: '',
     isPrinted: false
 });
 
-// Các tùy chọn trạng thái đơn hàng
+// Danh sách các trạng thái đơn hàng dùng cho thẻ Select
 const statusOptions = [
     { value: 'PENDING', label: 'Đang chờ xử lý' },
     { value: 'CONFIRMED', label: 'Đã xác nhận' },
@@ -50,14 +54,42 @@ const statusOptions = [
     { value: 'SHIPPED', label: 'Đang giao hàng' },
     { value: 'DELIVERED', label: 'Giao thành công' },
     { value: 'COMPLETED', label: 'Hoàn tất đơn' },
-    { value: 'CANCEL_REQUESTED', label: 'Đã xác nhận hủy đơn hàng' },
+    { value: 'CANCEL_REQUESTED', label: 'Yêu cầu hủy đơn hàng' },
     { value: 'CANCELLED_REFUNDED', label: 'Hủy thành công - Đã hoàn tiền' },
-    { value: 'CANCELLED', label: 'Yêu cầu hủy đơn hàng' },
+    { value: 'CANCELLED', label: 'Hủy thành công' },
     { value: 'RETURN_REQUESTED', label: 'Yêu cầu trả hàng' },
     { value: 'HIDDEN', label: 'Đã ẩn đơn hàng' }
 ];
 
-// --- LOGIC PARSER GHI CHÚ ---
+// ============================================================================
+// 2. CÁC HÀM TIỆN ÍCH (HELPERS FORMATTER) 
+// Phải đưa lên đây để các hàm bên dưới có thể gọi được
+// ============================================================================
+const translateStatus = (s) => statusOptions.find(opt => opt.value === s)?.label || s;
+const getBadgeClass = (s) => {
+    if (['DELIVERED', 'COMPLETED'].includes(s)) return 'bg-success';
+    if (['PENDING', 'CANCEL_REQUESTED'].includes(s)) return 'bg-warning text-dark';
+    if (['CANCELLED', 'CANCELLED_REFUNDED'].includes(s)) return 'bg-danger';
+    return 'bg-primary';
+};
+const canDelete = (s) => ['COMPLETED', 'HIDDEN', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(s);
+const getPaymentMethodName = (m) => m === 'BANK' ? 'Chuyển khoản' : 'Tiền mặt (COD)'; 
+const getPaymentMethodClass = (m) => m === 'BANK' ? 'text-primary border-primary' : 'text-success border-success';
+const getOrdererName = (o) => o.account?.fullname || o.account?.username || 'Khách vãng lai';
+const getOrdererEmail = (o) => o.account?.email || 'N/A';
+const getImageUrl = (img) => img ? `http://localhost:8080/imgs/${img.replace(/^\/|imgs\//g, '')}` : 'https://placehold.co/50x50';
+const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
+const formatDate = (d) => d ? new Date(d).toLocaleString('vi-VN') : 'N/A';
+const toDateString = (date) => {
+    const offset = date.getTimezoneOffset() * 60000;
+    return new Date(date.getTime() - offset).toISOString().split('T')[0];
+};
+
+// ============================================================================
+// 3. LOGIC TÍNH TOÁN DỮ LIỆU TỰ ĐỘNG (COMPUTED & WATCHERS)
+// ============================================================================
+
+// [TÍNH NĂNG TÁCH GHI CHÚ]: Tự động nhận diện và bóc tách thông tin hoàn trả ngân hàng từ chuỗi Ghi chú
 const parsedReturnInfo = computed(() => {
     const noteRaw = selectedOrder.notes || '';
     const returnKey = "| Yêu cầu trả:";
@@ -67,6 +99,8 @@ const parsedReturnInfo = computed(() => {
         const returnPart = parts[1];
         let reason = returnPart;
         let banking = "Không có thông tin ngân hàng";
+        
+        // Tách chuỗi nằm trong ngoặc vuông []
         if (returnPart.includes('[') && returnPart.includes(']')) {
             const splitBracket = returnPart.split('[');
             reason = splitBracket[0].trim();
@@ -77,9 +111,7 @@ const parsedReturnInfo = computed(() => {
     return { isReturn: false, reason: '', bankingInfo: '', cleanNote: noteRaw };
 });
 
-// --- METHODS ---
-
-// Xử lý Checkbox "Chọn tất cả"
+// [TÍNH NĂNG CHỌN TẤT CẢ]: Khi ô selectAll thay đổi, nếu = true thì lấy toàn bộ ID đẩy vào mảng selectedIds
 const toggleSelectAll = () => {
     if (selectAll.value) {
         selectedIds.value = orders.value.map(o => o.id);
@@ -88,18 +120,17 @@ const toggleSelectAll = () => {
     }
 };
 
-// Reset lựa chọn khi danh sách đơn hàng thay đổi
+// Reset mảng lựa chọn mỗi khi danh sách đơn hàng bị tải lại hoặc lọc lại
 watch(orders, () => {
     selectedIds.value = [];
     selectAll.value = false;
 });
 
-const toDateString = (date) => {
-    const offset = date.getTimezoneOffset() * 60000;
-    return new Date(date.getTime() - offset).toISOString().split('T')[0];
-};
+// ============================================================================
+// 4. CÁC HÀM XỬ LÝ NGHIỆP VỤ & API CALLS
+// ============================================================================
 
-// Xử lý bộ lọc nhanh
+// [TÍNH NĂNG LỌC NHANH]: Gán giá trị ngày tháng tự động dựa theo nút bấm
 const setQuickFilter = (type) => {
     filter.quickType = type;
     const now = new Date();
@@ -107,13 +138,19 @@ const setQuickFilter = (type) => {
     let end = new Date();
 
     if (type === 'today') {
-        // Hôm nay
+        // Hôm nay: Bắt đầu từ hôm nay đến hôm nay (tự động thiết lập sẵn)
     } else if (type === 'yesterday') {
+        // Hôm qua: Lùi lại 1 ngày cho cả start và end
         start.setDate(now.getDate() - 1);
         end.setDate(now.getDate() - 1);
     } else if (type === '7days') {
+        // 7 ngày qua: Lùi mốc bắt đầu lại 7 ngày
         start.setDate(now.getDate() - 7);
+    } else if (type === '30days') {
+        // 1 tháng qua (Lùi lại 30 ngày)
+        start.setDate(now.getDate() - 30);
     } else {
+        // Khôi phục tất cả về mặc định (Clear bộ lọc)
         filter.status = 'ALL';
         filter.paymentMethod = 'ALL';
         filter.startDate = '';
@@ -123,23 +160,26 @@ const setQuickFilter = (type) => {
         return;
     }
 
+    // Gán dữ liệu vào input date trên form để gửi đi
     filter.startDate = toDateString(start);
     filter.endDate = toDateString(end);
-    fetchOrders();
+    fetchOrders(); // Gọi API lấy dữ liệu mới
 };
 
-// Lấy danh sách đơn hàng từ API
+// [TÍNH NĂNG TẢI DỮ LIỆU]: Gửi các params lọc lên Server để lấy danh sách đơn hàng
 const fetchOrders = async () => {
     loading.value = true;
     try {
         const params = {};
         if (filter.status !== 'ALL') params.status = filter.status;
         if (filter.paymentMethod !== 'ALL') params.paymentMethod = filter.paymentMethod;
+        // Bọc thêm giờ để lấy trọn vẹn trong ngày (0h00 đến 23h59)
         if (filter.startDate) params.startDate = filter.startDate + "T00:00:00";
         if (filter.endDate) params.endDate = filter.endDate + "T23:59:59";
 
         const response = await apiClient.get('/admin/orders', { params });
         const data = response.data.content || response.data;
+        // Sắp xếp đơn mới nhất lên đầu
         orders.value = Array.isArray(data) ? data.sort((a, b) => new Date(b.createDate) - new Date(a.createDate)) : [];
     } catch (err) {
         error.value = 'Lỗi tải danh sách hóa đơn.';
@@ -149,12 +189,12 @@ const fetchOrders = async () => {
     }
 };
 
-// Làm mới dữ liệu
+// Làm mới màn hình (Clear bộ lọc)
 const refreshData = () => {
     setQuickFilter('all');
 };
 
-// Xem chi tiết đơn hàng
+// [TÍNH NĂNG XEM CHI TIẾT]: Lấy dữ liệu chi tiết của 1 đơn hàng và mở popup Modal
 const viewDetails = async (orderId) => {
     try {
         const response = await apiClient.get(`/admin/orders/${orderId}`);
@@ -165,7 +205,7 @@ const viewDetails = async (orderId) => {
     }
 };
 
-// Mở modal cập nhật trạng thái
+// [TÍNH NĂNG CẬP NHẬT TRẠNG THÁI - BƯỚC 1]: Mở Form để chọn trạng thái mới và soạn Mail
 const openStatusModal = (order) => {
     Object.assign(selectedOrder, order);
     updateForm.status = order.status;
@@ -174,13 +214,14 @@ const openStatusModal = (order) => {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('statusModal')).show();
 };
 
-// Thực hiện cập nhật trạng thái
+// [TÍNH NĂNG CẬP NHẬT TRẠNG THÁI - BƯỚC 2]: Gửi thông tin đổi trạng thái lên Server
 const updateOrderStatus = async () => {
     loading.value = true;
     try {
         const payload = { status: updateForm.status, sendEmail: updateForm.sendEmail.toString(), message: updateForm.message };
         await apiClient.put(`/admin/orders/${selectedOrder.id}/status`, payload);
         
+        // Cập nhật lại UI tĩnh không cần load lại API
         const index = orders.value.findIndex(o => o.id === selectedOrder.id);
         if (index !== -1) orders.value[index].status = updateForm.status;
         
@@ -193,7 +234,7 @@ const updateOrderStatus = async () => {
     }
 };
 
-// Xóa đơn hàng
+// [TÍNH NĂNG XÓA ĐƠN HÀNG]: Cảnh báo xác nhận và xóa
 const deleteOrder = async (orderId) => {
     const result = await Swal.fire({ title: 'Xóa đơn hàng?', icon: 'warning', showCancelButton: true, confirmButtonText: 'Xóa' });
     if (result.isConfirmed) {
@@ -207,17 +248,14 @@ const deleteOrder = async (orderId) => {
     }
 };
 
-// ---  LOGIC CỘNG LẠI TỒN KHO THỦ CÔNG ---
+// [TÍNH NĂNG CỘNG LẠI TỒN KHO]: Dành cho các đơn hàng hoàn/hủy chưa được cộng lại kho tự động
 const restockOrder = async (order) => {
     const result = await Swal.fire({
         title: 'Cộng lại tồn kho?',
         text: `Bạn có chắc chắn muốn cộng lại số lượng sản phẩm của đơn hàng #DH-${order.id} vào kho không?`,
         icon: 'question',
-        showCancelButton: true,
-        confirmButtonColor: '#198754',
-        cancelButtonColor: '#6c757d',
-        confirmButtonText: '<i class="bi bi-box-arrow-in-down me-1"></i> Đồng ý',
-        cancelButtonText: 'Hủy'
+        showCancelButton: true, confirmButtonColor: '#198754', cancelButtonColor: '#6c757d',
+        confirmButtonText: '<i class="bi bi-box-arrow-in-down me-1"></i> Đồng ý', cancelButtonText: 'Hủy'
     });
 
     if (result.isConfirmed) {
@@ -225,9 +263,8 @@ const restockOrder = async (order) => {
         try {
             const res = await apiClient.put(`/admin/orders/${order.id}/restock`);
             Swal.fire('Thành công!', res.data || 'Đã cộng lại số lượng vào kho.', 'success');
-            fetchOrders(); // Tải lại danh sách để cập nhật Ghi chú và ẩn nút
+            fetchOrders(); 
         } catch (err) {
-            console.error(err);
             Swal.fire('Lỗi', err.response?.data || 'Không thể thao tác cộng kho.', 'error');
         } finally {
             loading.value = false;
@@ -235,8 +272,11 @@ const restockOrder = async (order) => {
     }
 };
 
-// --- LOGIC IN HÓA ĐƠN PDF ---
+// ============================================================================
+// 5. TÍNH NĂNG IN HÓA ĐƠN PDF
+// ============================================================================
 
+// Mở modal cấu hình khổ giấy in cho MỘT đơn hàng
 const openPrintModal = (order) => {
     printConfig.orderId = order.id;
     printConfig.isBulk = false;
@@ -244,6 +284,7 @@ const openPrintModal = (order) => {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('printModal')).show();
 };
 
+// Mở modal cấu hình khổ giấy in khi click "In các đơn đã chọn"
 const openBulkPrintModal = () => {
     if (selectedIds.value.length === 0) {
         Swal.fire('Chưa chọn đơn hàng', 'Vui lòng tích chọn ít nhất 1 đơn hàng để in.', 'warning');
@@ -254,6 +295,7 @@ const openBulkPrintModal = () => {
     bootstrap.Modal.getOrCreateInstance(document.getElementById('printModal')).show();
 }
 
+// Xử lý tạo và tải file PDF về máy tính
 const downloadInvoice = async () => {
     try {
         bootstrap.Modal.getInstance(document.getElementById('printModal')).hide();
@@ -261,18 +303,18 @@ const downloadInvoice = async () => {
         Swal.fire({
             title: 'Đang tạo PDF...',
             text: printConfig.isBulk ? `Đang gộp ${selectedIds.value.length} hóa đơn...` : `Đang xuất hóa đơn khổ ${printConfig.paperSize}...`,
-            allowOutsideClick: false,
-            didOpen: () => { Swal.showLoading(); }
+            allowOutsideClick: false, didOpen: () => { Swal.showLoading(); }
         });
 
         let response;
         let fileName = "";
 
+        // Xác định gọi API In gộp nhiều đơn hay in lẻ
         if (printConfig.isBulk) {
             const idsString = selectedIds.value.join(',');
             response = await apiClient.get(`/admin/orders/export-pdf/bulk`, {
                 params: { ids: idsString, paperSize: printConfig.paperSize },
-                responseType: 'blob'
+                responseType: 'blob' // Bắt buộc khai báo là blob để nhận file nhị phân
             });
             fileName = `HoaDon_TongHop_${printConfig.paperSize}.pdf`;
         } else {
@@ -283,6 +325,7 @@ const downloadInvoice = async () => {
             fileName = `HoaDon_DH${printConfig.orderId}_${printConfig.paperSize}.pdf`;
         }
 
+        // Kỹ thuật tạo thẻ <a> ảo để kích hoạt hành động tải file của trình duyệt
         const url = window.URL.createObjectURL(new Blob([response.data]));
         const link = document.createElement('a');
         link.href = url;
@@ -290,9 +333,11 @@ const downloadInvoice = async () => {
         document.body.appendChild(link);
         link.click();
         
+        // Dọn dẹp RAM sau khi tải xong
         document.body.removeChild(link);
         window.URL.revokeObjectURL(url);
 
+        // Đánh dấu huy hiệu "Đã in" trên giao diện
         if (printConfig.isBulk) {
             selectedIds.value.forEach(id => {
                 const index = orders.value.findIndex(o => o.id === id);
@@ -309,6 +354,7 @@ const downloadInvoice = async () => {
 
     } catch (err) {
         console.error("Lỗi gốc:", err);
+        // Xử lý nếu backend trả về lỗi dạng JSON nhưng vì ta cấu hình responseType là blob nên nó bị bọc lại
         if (err.response && err.response.data instanceof Blob) {
             const reader = new FileReader();
             reader.onload = () => {
@@ -326,23 +372,7 @@ const downloadInvoice = async () => {
     }
 };
 
-// --- HELPERS ---
-const translateStatus = (s) => statusOptions.find(opt => opt.value === s)?.label || s;
-const getBadgeClass = (s) => {
-    if (['DELIVERED', 'COMPLETED'].includes(s)) return 'bg-success';
-    if (['PENDING', 'CANCEL_REQUESTED'].includes(s)) return 'bg-warning text-dark';
-    if (['CANCELLED', 'CANCELLED_REFUNDED'].includes(s)) return 'bg-danger';
-    return 'bg-primary';
-};
-const canDelete = (s) => ['COMPLETED', 'HIDDEN', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(s);
-const getPaymentMethodName = (m) => m === 'BANK' ? 'Chuyển khoản' : 'Tiền mặt (COD)'; 
-const getPaymentMethodClass = (m) => m === 'BANK' ? 'text-primary border-primary' : 'text-success border-success';
-const getOrdererName = (o) => o.account?.fullname || o.account?.username || 'Khách vãng lai';
-const getOrdererEmail = (o) => o.account?.email || 'N/A';
-const getImageUrl = (img) => img ? `http://localhost:8080/imgs/${img.replace(/^\/|imgs\//g, '')}` : 'https://placehold.co/50x50';
-const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
-const formatDate = (d) => d ? new Date(d).toLocaleString('vi-VN') : 'N/A';
-
+// Gọi API lấy dữ liệu ngay khi Component vừa render lên màn hình
 onMounted(fetchOrders);
 </script>
 
@@ -391,6 +421,7 @@ onMounted(fetchOrders);
                     <button class="btn btn-outline-primary" :class="{active: filter.quickType === 'today'}" @click="setQuickFilter('today')">Hôm nay</button>
                     <button class="btn btn-outline-primary" :class="{active: filter.quickType === 'yesterday'}" @click="setQuickFilter('yesterday')">Hôm qua</button>
                     <button class="btn btn-outline-primary" :class="{active: filter.quickType === '7days'}" @click="setQuickFilter('7days')">7 ngày</button>
+                    <button class="btn btn-outline-primary" :class="{active: filter.quickType === '30days'}" @click="setQuickFilter('30days')">1 tháng</button>
                     <button class="btn btn-outline-danger" @click="setQuickFilter('all')" title="Xóa tất cả bộ lọc">
                         <i class="bi bi-x-circle"></i>
                     </button>
@@ -494,6 +525,7 @@ onMounted(fetchOrders);
                         <h6 class="text-secondary fw-bold mb-3">GIAO DỊCH</h6>
                         <div class="card border-0 shadow-sm bg-white p-3">
                             <div class="mb-1"><small>Thanh toán:</small> <span class="fw-bold text-primary">{{ getPaymentMethodName(selectedOrder.paymentMethod) }}</span></div>
+                            
                             <div v-if="parsedReturnInfo.isReturn" class="alert alert-danger p-2 mt-2 mb-0 small">
                                 <strong>Hoàn tiền:</strong> {{ parsedReturnInfo.reason }}<br>
                                 <strong>Bank:</strong> {{ parsedReturnInfo.bankingInfo }}
