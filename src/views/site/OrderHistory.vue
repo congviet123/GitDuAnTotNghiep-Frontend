@@ -4,52 +4,54 @@ import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
 
-// 1. xử lý dữ liệu đơn hàng, đơn hàng được chọn, trạng thái loading, thông tin ngân hàng shop, thời gian hiện tại để đếm ngược
-const orders = ref([]);
+// =======================================================================
+// 1. STATE QUẢN LÝ DỮ LIỆU
+// =======================================================================
+const orders = ref([]); // Danh sách toàn bộ lịch sử đơn hàng của khách
 const selectedOrder = ref({ 
     id: null, orderDetails: [], totalAmount: 0, createDate: null, 
     notes: '', shippingAddress: '', status: '', paymentMethod: 'COD', account: {}
-});
-const loading = ref(false);
-let pollingInterval = null; 
-let countdownInterval = null; 
+}); // Chi tiết đơn hàng đang được xem khi bấm mở Modal
+const loading = ref(false); // Cờ hiển thị vòng xoay loading
+let pollingInterval = null; // Biến lưu trữ vòng lặp kiểm tra thanh toán QR
+let countdownInterval = null; // Biến lưu trữ vòng lặp đếm ngược 24h
 
 const shopBank = ref({
     bankId: '', accountNo: '', accountName: '' 
 });
 
-const currentNow = ref(new Date().getTime()); 
+const currentNow = ref(new Date().getTime()); // Lưu thời gian thực tế hiện tại để đếm ngược realtime
 
-// 2. xử lý đếm ngược thời gian đổi trả & điều kiện hiển thị nút "Yêu cầu hoàn trả"
+// =======================================================================
+// 2. LOGIC ĐẾM NGƯỢC THỜI GIAN ĐỔI TRẢ (24H) & TRẠNG THÁI ẢO
+// =======================================================================
 
+//  Hàm khởi động đồng hồ đếm ngược (chạy mỗi 1 giây)
 const startCountdownTimer = () => {
     if (countdownInterval) clearInterval(countdownInterval);
     countdownInterval = setInterval(() => {
-        currentNow.value = new Date().getTime();
+        currentNow.value = new Date().getTime(); // Cập nhật thời gian hiện tại mỗi giây
     }, 1000);
 };
 
-// Hàm tính toán đếm ngược cực kỳ thông minh
+//  Hàm tính toán thời gian đổi trả (24h kể từ khi giao hàng)
 const getReturnTimeLeft = (order) => {
-    // Ưu tiên lấy ngày Giao hàng. Nếu đơn cũ bị null, lấy tạm Ngày đặt hàng để đếm
+    // Lấy ngày giao hàng (nếu NULL thì lấy tạm ngày đặt hàng để tránh lỗi)
     const baseDateString = order.deliveryDate || order.createDate;
-    
     if (!baseDateString) return { expired: true, text: 'Hết hạn' };
     
-    // Mốc bắt đầu + 24 tiếng
     const baseDate = new Date(baseDateString).getTime();
-    const deadline = baseDate + (24 * 60 * 60 * 1000); 
-    const diff = deadline - currentNow.value;
+    const deadline = baseDate + (24 * 60 * 60 * 1000); // Mốc thời gian = Lúc giao + 24 tiếng
+    const diff = deadline - currentNow.value; // Tính chênh lệch
 
-    // Nếu thời gian chênh lệch <= 0 nghĩa là đã quá 24h
+    // Nếu thời gian chênh lệch <= 0 nghĩa là đã quá 24h -> Báo hết hạn
     if (diff <= 0) return { expired: true, text: 'Hết hạn đổi trả' };
 
-    // Tính toán Giờ, Phút, Giây còn lại
+    // Quy đổi ra Giờ, Phút, Giây
     const hours = Math.floor(diff / (1000 * 60 * 60));
     const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
     const seconds = Math.floor((diff % (1000 * 60)) / 1000);
 
-    // Format lại cho đẹp (Ví dụ: 09h 05m 02s)
     const formattedHours = hours.toString().padStart(2, '0');
     const formattedMinutes = minutes.toString().padStart(2, '0');
     const formattedSeconds = seconds.toString().padStart(2, '0');
@@ -60,12 +62,28 @@ const getReturnTimeLeft = (order) => {
     };
 };
 
-const canReturnOrder = (order) => {
-    if (order.status !== 'DELIVERED') return false; // Chỉ đơn đã giao mới được trả
-    const returnTime = getReturnTimeLeft(order);
-    return !returnTime.expired; // Trả về true nếu chưa hết hạn
+//  TRẠNG THÁI THỰC TẾ (HIỆU ỨNG REAL-TIME)
+// Nếu đồng hồ đếm về 0, giao diện tự động ép trạng thái thành "COMPLETED" (Hoàn tất)
+// ngay cả khi Backend chưa kịp chạy Job quét đơn để cập nhật Database.
+const getEffectiveStatus = (order) => {
+    if (!order) return '';
+    if (order.status === 'DELIVERED') {
+        const returnTime = getReturnTimeLeft(order);
+        if (returnTime.expired) {
+            return 'COMPLETED'; // Ép thành Hoàn tất ngay lập tức trên UI
+        }
+    }
+    return order.status;
 };
 
+// Kiểm tra xem đơn hàng có đủ điều kiện trả hay không
+const canReturnOrder = (order) => {
+    if (order.status !== 'DELIVERED') return false; // Chỉ đơn đang ở trạng thái Giao thành công mới xét
+    const returnTime = getReturnTimeLeft(order);
+    return !returnTime.expired; // Chưa hết hạn thì được trả
+};
+
+//  Tạo mã QR thanh toán động thông qua API của VietQR
 const qrCodeUrl = computed(() => {
     if (!selectedOrder.value || !selectedOrder.value.id || !shopBank.value.bankId) return '';
     const amount = Math.round(selectedOrder.value.totalAmount);
@@ -73,6 +91,7 @@ const qrCodeUrl = computed(() => {
     return `https://img.vietqr.io/image/${shopBank.value.bankId}-${shopBank.value.accountNo}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}`;
 });
 
+//  Bóc tách địa chỉ giao hàng, tên và sđt từ chuỗi lưu trong DB
 const parsedShippingInfo = computed(() => {
     const name = selectedOrder.value.account?.fullname || 'Khách lẻ';
     const phone = selectedOrder.value.account?.phone || '---';
@@ -83,21 +102,21 @@ const parsedShippingInfo = computed(() => {
     return { name, phone, address };
 });
 
+// Bóc tách thông tin ngân hàng và lý do trả hàng từ chuỗi Ghi chú
 const returnRequestInfo = computed(() => {
     const raw = selectedOrder.value.notes || '';
     const regexNew = /\[Yêu cầu trả:\s*(.*?)\s*\|\s*Bank:\s*(.*?)\s*\|\s*KH:\s*(.*?)\]/;
     const matchNew = raw.match(regexNew);
-    if (matchNew) {
-        return { reason: matchNew[1], bank: matchNew[2], contact: matchNew[3], originalString: matchNew[0] };
-    }
+    if (matchNew) return { reason: matchNew[1], bank: matchNew[2], contact: matchNew[3], originalString: matchNew[0] };
+    
     const regexOld = /\|\s*Yêu cầu trả:\s*(.*?)\s*\[Hoàn tiền:\s*(.*?)\]/;
     const matchOld = raw.match(regexOld);
-    if (matchOld) {
-        return { reason: matchOld[1], bank: matchOld[2], contact: '', originalString: matchOld[0] };
-    }
+    if (matchOld) return { reason: matchOld[1], bank: matchOld[2], contact: '', originalString: matchOld[0] };
+    
     return null;
 });
 
+//  Hiển thị Ghi chú sau khi đã xóa đi phần thông tin ngân hàng (để UI đỡ rác)
 const displayNote = computed(() => {
     const raw = selectedOrder.value.notes || '';
     if (returnRequestInfo.value) {
@@ -106,7 +125,9 @@ const displayNote = computed(() => {
     return raw;
 });
 
-// 3. xử lý gọi API lấy lịch sử đơn hàng, thông tin ngân hàng shop, hủy đơn hàng, yêu cầu hoàn trả, xóa đơn hàng
+// =======================================================================
+// 3. LOGIC GỌI API (Lấy danh sách đơn, Lấy thông tin Ngân hàng)
+// =======================================================================
 const fetchOrderHistory = async () => {
     loading.value = true;
     try {
@@ -124,9 +145,14 @@ const fetchBankInfo = async () => {
     }
 };
 
-// 4. sử lý gọi API hủy đơn hàng, yêu cầu hoàn trả, xóa đơn hàng
+// =======================================================================
+// 4. LOGIC XỬ LÝ HÀNH ĐỘNG CỦA KHÁCH HÀNG (Hủy đơn, Trả hàng, Xóa đơn)
+// =======================================================================
+
+//  Hàm xử lý Hủy Đơn Hàng (Phân chia thành COD và Chuyển Khoản)
 const cancelOrder = async (order) => {
     if (!isTransfer(order.paymentMethod)) {
+        // Hủy đơn Tiền mặt (COD) - Hủy trực tiếp không cần nhập STK
         const { value: reason } = await Swal.fire({
             title: 'Hủy đơn hàng?',
             input: 'select',
@@ -140,16 +166,14 @@ const cancelOrder = async (order) => {
                 'Khác': 'Lý do khác'
             },
             inputPlaceholder: 'Chọn lý do hủy...',
-            showCancelButton: true,
-            confirmButtonText: 'Xác nhận hủy',
-            confirmButtonColor: '#d33',
+            showCancelButton: true, confirmButtonText: 'Xác nhận hủy', confirmButtonColor: '#d33',
             inputValidator: (value) => { if (!value) return 'Bạn cần chọn một lý do!'; }
         });
 
         if (reason) {
             try {
                 await apiClient.put(`/orders/${order.id}/cancel`, { reason });
-                await Swal.fire('Thành công', 'Đơn hàng đã được hủy.', 'success');
+                await Swal.fire('Thành công', 'Đã hủy đơn hàng thành công.', 'success');
                 fetchOrderHistory();
             } catch (e) {
                 Swal.fire('Lỗi', e.response?.data || 'Lỗi hủy đơn.', 'error');
@@ -157,6 +181,7 @@ const cancelOrder = async (order) => {
         }
     } 
     else {
+        // Hủy đơn Đã chuyển khoản (Bank) - Mở form điền thông tin STK để Shop hoàn tiền
         const { value: formValues } = await Swal.fire({
             title: 'HỦY ĐƠN & HOÀN TIỀN',
             width: '600px',
@@ -228,6 +253,7 @@ const cancelOrder = async (order) => {
     }
 };
 
+//  Hàm xử lý Yêu cầu Hoàn Trả (Cho đơn đã nhận hàng, có gửi kèm ảnh minh chứng)
 const requestReturn = async (order) => {
     let adminOptions = '';
     try {
@@ -335,6 +361,7 @@ const requestReturn = async (order) => {
     }
 };
 
+// Hàm xử lý xóa lịch sử đơn hàng (Chỉ xóa trên UI Khách, DB thì chuyển sang HIDDEN)
 const deleteOrder = async (orderId) => {
     const result = await Swal.fire({ title: 'Xóa lịch sử?', text: "Bạn sẽ không thấy đơn này nữa.", icon: 'warning', showCancelButton: true, confirmButtonText: 'Xóa vĩnh viễn' });
     if (result.isConfirmed) {
@@ -343,7 +370,7 @@ const deleteOrder = async (orderId) => {
 };
 
 // =======================================================================
-// 5. xử lý hiển thị thông tin đơn hàng, trạng thái, hình thức thanh toán, thời gian đếm ngược đổi trả
+// 5. HELPER FORMATTER VÀ DỊCH TRẠNG THÁI UI
 // =======================================================================
 const isTransfer = (method) => method === 'BANK' || method === 'QR';
 const getPaymentMethodDisplay = (order) => isTransfer(order.paymentMethod) ? 'Chuyển khoản (QR)' : 'Tiền mặt (COD)';
@@ -353,8 +380,11 @@ const translateStatus = (status) => {
     const map = {
         'PENDING': 'Đang chờ xử lý', 'CONFIRMED': 'Đã xác nhận', 'PREPARING': 'Đang chuẩn bị hàng',
         'SHIPPING': 'Đang vận chuyển', 'SHIPPED': 'Đang giao hàng', 'DELIVERED': 'Giao thành công',
-        'COMPLETED': 'Hoàn tất', 'CANCELLED': 'Yêu cầu hủy đơn hàng', 'RETURN_REQUESTED': 'Yêu cầu hoàn trả',
-        'CANCELLED_REFUNDED': 'Đã hoàn tiền', 'PAID': 'Đã thanh toán', 'CANCEL_REQUESTED': 'Đã xác nhận hủy đơn hàng'
+        'COMPLETED': 'Hoàn tất', 
+        'CANCEL_REQUESTED': 'Yêu cầu hủy đơn hàng',
+        'RETURN_REQUESTED': 'Yêu cầu hoàn trả',
+        'CANCELLED_REFUNDED': 'Đã hoàn tiền', 'PAID': 'Đã thanh toán', 
+        'CANCELLED': 'Hủy thành công'
     };
     return map[status] || status;
 };
@@ -370,23 +400,21 @@ const getStatusBadgeClass = (status) => {
 const formatPrice = (v) => new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(v || 0);
 const formatDate = (d) => d ? new Date(d).toLocaleDateString('vi-VN') + ' ' + new Date(d).toLocaleTimeString('vi-VN', {hour:'2-digit', minute:'2-digit'}) : 'N/A';
 
-// [ĐÃ SỬA] Hàm xử lý ảnh chuẩn xác chống lỗi
 const getImageUrl = (imageName) => {
     if (!imageName) return 'https://placehold.co/100x100?text=No+Image';
     if (imageName.startsWith('http') || imageName.startsWith('blob:')) return imageName;
-
     let cleanName = imageName;
     if (cleanName.startsWith('/')) cleanName = cleanName.substring(1);
-
     const baseUrl = 'http://localhost:8080';
     if (cleanName.startsWith('imgs/')) return `${baseUrl}/${cleanName}`;
-    
     return `${baseUrl}/imgs/${cleanName}`;
 };
 
 // =======================================================================
-// 6. xử lý hiển thị chi tiết đơn hàng & thanh toán lại (đơn chuyển khoản) & polling trạng thái đơn hàng (đơn chuyển khoản)
+// 6. XỬ LÝ CHI TIẾT ĐƠN VÀ POLLING KIỂM TRA TRẠNG THÁI THANH TOÁN
 // =======================================================================
+
+//  Mở bảng chi tiết của 1 đơn hàng cụ thể
 const viewDetails = async (orderId) => {
     try {
         const response = await apiClient.get(`/orders/${orderId}`);
@@ -397,15 +425,17 @@ const viewDetails = async (orderId) => {
     } catch (e) { console.error(e); }
 };
 
+// Dừng vòng lặp quét
 const stopPolling = () => { if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; } };
 
+//  Vòng lặp liên tục gọi API mỗi 2.5s để kiểm tra xem Webhook đã nhận được tiền của khách chưa
 const startPollingOrder = (orderId) => {
     stopPolling();
     pollingInterval = setInterval(async () => {
         try {
             const res = await apiClient.get(`/orders/${orderId}`);
             if (['CONFIRMED', 'PAID', 'PREPARING'].includes(res.data.status)) {
-                stopPolling();
+                stopPolling(); // Nếu nhận được tiền -> Dừng quét
                 bootstrap.Modal.getInstance(document.getElementById('rePaymentQrModal'))?.hide();
                 await fetchOrderHistory();
                 Swal.fire({ title: 'Thanh toán thành công!', icon: 'success', timer: 3000, showConfirmButton: false });
@@ -414,21 +444,24 @@ const startPollingOrder = (orderId) => {
     }, 2500);
 };
 
+// Mở form quét QR thanh toán cho những đơn Bank bị quên thanh toán lúc đầu
 const openPaymentModal = () => {
     bootstrap.Modal.getInstance(document.getElementById('orderDetailModal'))?.hide();
     new bootstrap.Modal(document.getElementById('rePaymentQrModal')).show();
     startPollingOrder(selectedOrder.value.id);
 };
 
+// Lifecycle: Hủy bỏ các vòng lặp khi chuyển trang để tránh rò rỉ bộ nhớ RAM
 onBeforeUnmount(() => {
     stopPolling();
     if (countdownInterval) clearInterval(countdownInterval);
 });
 
+// Lifecycle: Khởi chạy lần đầu tiên
 onMounted(() => { 
     fetchOrderHistory(); 
     fetchBankInfo(); 
-    startCountdownTimer(); // Bắt đầu đếm ngược
+    startCountdownTimer(); // Bật đồng hồ đếm ngược
 });
 </script>
 
@@ -465,7 +498,8 @@ onMounted(() => {
                             <td>{{ formatDate(order.createDate).split(' ')[0] }}</td>
                             <td class="text-danger fw-bold">{{ formatPrice(order.totalAmount) }}</td>
                             <td><span class="badge border" :class="getPaymentClass(order)">{{ getPaymentMethodDisplay(order) }}</span></td>
-                            <td><span class="badge rounded-pill px-3 py-2" :class="getStatusBadgeClass(order.status)">{{ translateStatus(order.status) }}</span></td>
+                            
+                            <td><span class="badge rounded-pill px-3 py-2" :class="getStatusBadgeClass(getEffectiveStatus(order))">{{ translateStatus(getEffectiveStatus(order)) }}</span></td>
                             
                             <td class="text-center">
                                 <span v-if="order.status === 'DELIVERED'">
@@ -482,11 +516,11 @@ onMounted(() => {
                             <td class="text-center">
                                 <button class="btn btn-primary btn-sm me-2 fw-bold" @click="viewDetails(order.id)"><i class="bi bi-eye"></i> Chi tiết</button>
                                 
-                                <button v-if="['PENDING', 'CONFIRMED'].includes(order.status)" class="btn btn-warning btn-sm fw-bold me-2" @click="cancelOrder(order)">Hủy đơn</button>
+                                <button v-if="['PENDING', 'CONFIRMED'].includes(getEffectiveStatus(order))" class="btn btn-warning btn-sm fw-bold me-2" @click="cancelOrder(order)">Hủy đơn</button>
                                 
                                 <button v-if="canReturnOrder(order)" class="btn btn-outline-secondary btn-sm fw-bold me-2" @click="requestReturn(order)">Hoàn trả</button>
                                 
-                                <button v-if="['COMPLETED', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(order.status)" class="btn btn-danger btn-sm fw-bold" @click="deleteOrder(order.id)" title="Xóa lịch sử"><i class="bi bi-trash"></i></button>
+                                <button v-if="['COMPLETED', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(getEffectiveStatus(order))" class="btn btn-danger btn-sm fw-bold" @click="deleteOrder(order.id)" title="Xóa lịch sử"><i class="bi bi-trash"></i></button>
                             </td>
                         </tr>
                     </tbody>
@@ -505,9 +539,9 @@ onMounted(() => {
                     </div>
 
                     <div class="modal-body p-0 bg-white">
-                        <div v-if="!isTransfer(selectedOrder.paymentMethod) && !['CANCELLED','CANCELLED_REFUNDED','DELIVERED','COMPLETED','RETURN_REQUESTED'].includes(selectedOrder.status)" class="alert alert-info m-0 rounded-0 border-0 px-4 py-3 d-flex align-items-center bg-info bg-opacity-10"><i class="bi bi-truck fs-1 me-3 text-info"></i><div><h6 class="fw-bold mb-1 text-info text-uppercase">Đơn hàng Tiền mặt (COD)</h6><span class="small text-dark">Vui lòng chuẩn bị tiền mặt <strong>{{ formatPrice(selectedOrder.totalAmount) }}</strong> khi nhận hàng.</span></div></div>
-                        <div v-else-if="isTransfer(selectedOrder.paymentMethod) && selectedOrder.status === 'PENDING'" class="alert alert-warning m-0 rounded-0 border-0 px-4 py-3 bg-warning bg-opacity-10"><div class="d-flex align-items-center justify-content-between"><div class="d-flex align-items-center"><i class="bi bi-exclamation-triangle-fill fs-1 me-3 text-warning"></i><div><h6 class="fw-bold mb-1 text-dark">Chưa thanh toán!</h6><span class="small text-dark">Vui lòng chuyển khoản để xác nhận đơn hàng.</span></div></div><button @click="openPaymentModal" class="btn btn-primary fw-bold px-3 shadow-sm rounded-1"><i class="bi bi-qr-code-scan me-2"></i>Chuyển khoản ngay</button></div></div>
-                        <div v-else-if="isTransfer(selectedOrder.paymentMethod) && ['CONFIRMED','PAID','PREPARING','SHIPPING','SHIPPED','DELIVERED','COMPLETED'].includes(selectedOrder.status)" class="alert alert-success m-0 rounded-0 border-0 px-4 py-3 d-flex align-items-center bg-success bg-opacity-10"><i class="bi bi-check-circle-fill fs-1 me-3 text-success"></i><div><h6 class="fw-bold mb-1 text-success text-uppercase">Đã thanh toán thành công!</h6><span class="small text-dark">Đơn hàng của bạn đã được thanh toán chuyển khoản thành công.</span></div></div>
+                        <div v-if="!isTransfer(selectedOrder.paymentMethod) && !['CANCELLED','CANCELLED_REFUNDED','DELIVERED','COMPLETED','RETURN_REQUESTED'].includes(getEffectiveStatus(selectedOrder))" class="alert alert-info m-0 rounded-0 border-0 px-4 py-3 d-flex align-items-center bg-info bg-opacity-10"><i class="bi bi-truck fs-1 me-3 text-info"></i><div><h6 class="fw-bold mb-1 text-info text-uppercase">Đơn hàng Tiền mặt (COD)</h6><span class="small text-dark">Vui lòng chuẩn bị tiền mặt <strong>{{ formatPrice(selectedOrder.totalAmount) }}</strong> khi nhận hàng.</span></div></div>
+                        <div v-else-if="isTransfer(selectedOrder.paymentMethod) && getEffectiveStatus(selectedOrder) === 'PENDING'" class="alert alert-warning m-0 rounded-0 border-0 px-4 py-3 bg-warning bg-opacity-10"><div class="d-flex align-items-center justify-content-between"><div class="d-flex align-items-center"><i class="bi bi-exclamation-triangle-fill fs-1 me-3 text-warning"></i><div><h6 class="fw-bold mb-1 text-dark">Chưa thanh toán!</h6><span class="small text-dark">Vui lòng chuyển khoản để xác nhận đơn hàng.</span></div></div><button @click="openPaymentModal" class="btn btn-primary fw-bold px-3 shadow-sm rounded-1"><i class="bi bi-qr-code-scan me-2"></i>Chuyển khoản ngay</button></div></div>
+                        <div v-else-if="isTransfer(selectedOrder.paymentMethod) && ['CONFIRMED','PAID','PREPARING','SHIPPING','SHIPPED','DELIVERED','COMPLETED'].includes(getEffectiveStatus(selectedOrder))" class="alert alert-success m-0 rounded-0 border-0 px-4 py-3 d-flex align-items-center bg-success bg-opacity-10"><i class="bi bi-check-circle-fill fs-1 me-3 text-success"></i><div><h6 class="fw-bold mb-1 text-success text-uppercase">Đã thanh toán thành công!</h6><span class="small text-dark">Đơn hàng của bạn đã được thanh toán chuyển khoản thành công.</span></div></div>
 
                         <div class="p-4 border-bottom">
                             <div class="row g-4">

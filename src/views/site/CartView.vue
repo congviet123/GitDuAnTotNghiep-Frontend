@@ -9,53 +9,74 @@ import { useAuthStore } from '@/store/auth';
 const router = useRouter();
 const authStore = useAuthStore();
 
-// --- STATE ---
+// ============================================================================
+// 1. STATE QUẢN LÝ DỮ LIỆU
+// ============================================================================
 const cartItems = ref([]);
-const selectedProductIds = ref([]); // Lưu Product ID để xử lý logic thanh toán
+const selectedProductIds = ref([]); // Mảng chứa ID các sản phẩm được tích chọn để mua
 const addressError = ref(null);
 
-// Quản lý địa chỉ
+// [QUẢN LÝ ĐỊA CHỈ]: Lưu trữ danh sách Sổ địa chỉ của người dùng
 const savedAddresses = ref([]);
-const addressType = ref('new');
-const selectedAddressId = ref(null);
+const selectedAddressId = ref(null); // ID của địa chỉ được chọn để giao hàng
 
-// Modal instances
+// Quản lý Modal (Popup) Bootstrap
 let checkoutModalInstance = null;
 let qrModalInstance = null;
 
-// Biến thanh toán Online
+// [THANH TOÁN ONLINE]: Quản lý đơn hàng vừa tạo và vòng lặp quét (Polling)
 const createdOrder = ref(null); 
 let pollingInterval = null;     
 
+// Thông tin ngân hàng của Shop (Sẽ lấy từ API)
 const shopBank = ref({
     bankId: '',
     accountNo: '',
     accountName: ''
 });
 
-// Dữ liệu đơn hàng
+// Dữ liệu đơn hàng chuẩn bị gửi đi
 const orderData = reactive({
-    recipientName: '', 
-    recipientPhone: '', 
-    shippingAddress: '', 
-    notes: '', 
+    notes: '', // Khách hàng chỉ được phép nhập ghi chú, không được nhập địa chỉ
     paymentMethod: 'COD'
 });
 
-// --- COMPUTED ---
+// ============================================================================
+// 2. COMPUTED (Tính toán dữ liệu tự động)
+// ============================================================================
 const isAuthenticated = computed(() => authStore.isAuthenticated);
 
-// Lọc ra các item (dòng giỏ hàng) được chọn dựa trên Product ID
+// Lọc ra danh sách các mặt hàng đang được đánh dấu (Tick) trong giỏ
 const selectedItems = computed(() => {
     return cartItems.value.filter(item => selectedProductIds.value.includes(item.product.id));
 });
 
-// Tính tổng tiền: item.product.price * item.quantity
+// Tính tổng tiền của các mặt hàng ĐANG ĐƯỢC CHỌN
 const totalSelectedAmount = computed(() => {
     return selectedItems.value.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
 });
 
-// QR Code
+// CHECKBOX CHỌN TẤT CẢ (Writable Computed)
+// Ý nghĩa: Tự động đồng bộ trạng thái giữa nút "Chọn tất cả" và các nút con
+const selectAll = computed({
+    // Get: Xác định xem nút "Chọn tất cả" có đang được tick hay không
+    // Trả về true nếu giỏ hàng có đồ VÀ số lượng nút con được tick BẰNG với tổng số hàng trong giỏ
+    get: () => {
+        return cartItems.value.length > 0 && selectedProductIds.value.length === cartItems.value.length;
+    },
+    // Set: Xử lý khi người dùng bấm vào nút "Chọn tất cả"
+    set: (value) => {
+        if (value) {
+            // Nếu đánh dấu chọn tất cả -> Lấy toàn bộ ID sản phẩm đẩy vào mảng selectedProductIds
+            selectedProductIds.value = cartItems.value.map(item => item.product.id);
+        } else {
+            // Nếu bỏ chọn tất cả -> Làm rỗng mảng
+            selectedProductIds.value = [];
+        }
+    }
+});
+
+// [TÍNH NĂNG MÃ QR]: Tự động render link ảnh mã VietQR kèm theo số tiền và mã đơn hàng
 const qrCodeUrlCreated = computed(() => {
     if (!createdOrder.value || !shopBank.value.bankId) return '';
     const amount = Math.round(createdOrder.value.totalAmount);
@@ -63,21 +84,17 @@ const qrCodeUrlCreated = computed(() => {
     return `https://img.vietqr.io/image/${shopBank.value.bankId}-${shopBank.value.accountNo}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(content)}`;
 });
 
-// --- [SỬA LỖI ẢNH Ở ĐÂY] ---
+// ============================================================================
+// 3. HELPERS (Các hàm tiện ích)
+// ============================================================================
 const getImageUrl = (imagePath) => {
     if (!imagePath) return 'https://placehold.co/100x100?text=No+Image';
     if (imagePath.startsWith('http')) return imagePath;
 
-    // Server Backend đang chạy ở port 8080
     const baseUrl = 'http://localhost:8080';
-
-
-    // Trường hợp DB lưu đường dẫn đầy đủ 'imgs/tao.jpg'
     if (imagePath.startsWith('imgs/')) {
         return `${baseUrl}/${imagePath}`;
     }
-
-    // Trường hợp dự phòng: Nếu DB chỉ lưu tên file 'tao.jpg' thì mới thêm 'imgs/'
     return `${baseUrl}/imgs/${imagePath}`;
 };
 
@@ -85,14 +102,16 @@ const formatPrice = (value) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value || 0);
 };
 
-// --- METHODS (CART) ---
+// ============================================================================
+// 4. LOGIC XỬ LÝ GIỎ HÀNG (Lấy, Thêm, Xóa, Sửa số lượng)
+// ============================================================================
 const fetchCartItems = async () => {
     if (!isAuthenticated.value) return;
     try {
         const response = await apiClient.get('/cart');
-        cartItems.value = response.data; // Dữ liệu trả về là List<Cart> (Entity)
+        cartItems.value = response.data;
         
-        // Mặc định chọn hết nếu chưa chọn gì
+        // Mặc định: Auto-tick (chọn tất cả) khi vừa vào trang giỏ hàng
         if(cartItems.value.length > 0 && selectedProductIds.value.length === 0) {
             selectedProductIds.value = cartItems.value.map(item => item.product.id);
         }
@@ -101,19 +120,18 @@ const fetchCartItems = async () => {
 
 const fetchBankInfo = async () => {
     try {
-        // [TODO]: Thay bằng API thật nếu có
         shopBank.value = { bankId: 'TPB', accountNo: '0901111222', accountName: 'TRAI CAY BAY SHOP' };
     } catch (error) { console.error('Lỗi bank info:', error); }
 };
 
-// Logic Update số lượng
+// [TÍNH NĂNG ĐIỀU CHỈNH SỐ LƯỢNG]: Gọi API cập nhật ngay khi bấm nút +/-
 const updateQuantityAPI = async (cartId, newQuantity) => {
     if (newQuantity === null || newQuantity <= 0) { 
         removeItem(cartId); 
         return; 
     }
     
-    newQuantity = Math.round(newQuantity * 10) / 10; // Làm tròn 1 số thập phân
+    newQuantity = Math.round(newQuantity * 10) / 10; 
     
     try {
         const response = await apiClient.put(`/cart/${cartId}?quantity=${newQuantity}`);
@@ -125,20 +143,17 @@ const updateQuantityAPI = async (cartId, newQuantity) => {
     }
 };
 
-const increaseQuantity = (item) => { 
-    updateQuantityAPI(item.id, item.quantity + 0.5); 
-};
-
+const increaseQuantity = (item) => { updateQuantityAPI(item.id, item.quantity + 0.5); };
 const decreaseQuantity = (item) => { 
     if(item.quantity > 0.5) updateQuantityAPI(item.id, item.quantity - 0.5); 
     else removeItem(item.id); 
 };
-
 const onQuantityInputChange = (item, event) => { 
     const val = parseFloat(event.target.value); 
     if(!isNaN(val)) updateQuantityAPI(item.id, val); 
 };
 
+// [TÍNH NĂNG XÓA KHỎI GIỎ HÀNG]
 const removeItem = async (cartId) => {
     const result = await Swal.fire({ title: 'Xác nhận xóa?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Xóa', cancelButtonText: 'Hủy' });
     if (result.isConfirmed) {
@@ -146,71 +161,81 @@ const removeItem = async (cartId) => {
             const res = await apiClient.delete(`/cart/${cartId}`);
             cartItems.value = res.data; 
             
-            // Xóa item khỏi danh sách selectedProductIds nếu nó bị xóa khỏi giỏ
-            // (Code này đảm bảo tính nhất quán UI)
+            // Xóa item khỏi danh sách được tick (selectedProductIds) nếu nó bị xóa khỏi giỏ
             const currentProductIds = cartItems.value.map(i => i.product.id);
             selectedProductIds.value = selectedProductIds.value.filter(id => currentProductIds.includes(id));
-
         } catch (e) { console.error(e); }
     }
 };
 
-// --- METHODS (CHECKOUT) ---
+// ============================================================================
+// 5. LOGIC THANH TOÁN (CHECKOUT) VÀ RÀNG BUỘC ĐỊA CHỈ
+// ============================================================================
+
+// Lấy danh sách địa chỉ từ Profile
 const fetchSavedAddresses = async () => {
     try {
         const res = await apiClient.get('/addresses');
         savedAddresses.value = res.data;
         
+        // Nếu có địa chỉ, tự động đánh dấu tick vào địa chỉ mặc định (hoặc địa chỉ đầu tiên)
         if (savedAddresses.value.length > 0) {
-            addressType.value = 'saved';
             const defaultAddr = savedAddresses.value.find(a => a.isDefault);
             selectedAddressId.value = defaultAddr ? defaultAddr.id : savedAddresses.value[0].id;
-        } else {
-            addressType.value = 'new';
-        }
+        } 
     } catch (err) {
-        console.error(err);
-        addressType.value = 'new';
+        console.error("Lỗi lấy sổ địa chỉ:", err);
     }
 };
 
+// [TÍNH NĂNG RÀNG BUỘC ĐỊA CHỈ MỚI]: Bấm nút "Tiến hành đặt hàng"
 const checkout = async () => {
-    if (selectedItems.value.length === 0) return Swal.fire('Thông báo', 'Vui lòng chọn sản phẩm.', 'info');
+    // 1. Kiểm tra phải tick ít nhất 1 sản phẩm
+    if (selectedItems.value.length === 0) return Swal.fire('Thông báo', 'Vui lòng chọn ít nhất 1 sản phẩm để thanh toán.', 'info');
     
+    // 2. Lấy dữ liệu sổ địa chỉ
     if (isAuthenticated.value) {
         await fetchSavedAddresses();
+        
+        // NẾU CHƯA CÓ ĐỊA CHỈ NÀO -> CHẶN LẠI VÀ CHUYỂN HƯỚNG TỚI TRANG PROFILE
+        if (savedAddresses.value.length === 0) {
+            Swal.fire({
+                title: 'Thiếu thông tin giao hàng',
+                text: 'Vui lòng thiết lập thông tin cá nhân và địa chỉ trước khi đặt mua!',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Đi tới thiết lập',
+                cancelButtonText: 'Đóng'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    router.push('/profile'); // Chuyển thẳng tới trang hồ sơ cá nhân
+                }
+            });
+            return; // Chặn không cho thực thi lệnh mở Modal bên dưới
+        }
     }
     
+    // 3. Đã qua các bước kiểm tra -> Mở Modal Thanh Toán
     if (checkoutModalInstance) checkoutModalInstance.show();
 };
 
+// [TÍNH NĂNG ĐẶT HÀNG]: Gửi lệnh lên Backend
 const submitOrder = async () => {
     addressError.value = null;
-    
-    let finalRecipientName = '';
-    let finalRecipientPhone = '';
-    let finalShippingAddress = '';
 
-    if (addressType.value === 'saved') {
-        if (!selectedAddressId.value) {
-            addressError.value = "Vui lòng chọn một địa chỉ.";
-            return;
-        }
-        const addr = savedAddresses.value.find(a => a.id === selectedAddressId.value);
-        if (addr) {
-            finalRecipientName = addr.fullname;
-            finalRecipientPhone = addr.phone;
-            finalShippingAddress = addr.addressLine + ', ' + addr.ward + ', ' + addr.district + ', ' + addr.province;
-        }
-    } else {
-        if (!orderData.shippingAddress.trim()) { addressError.value = "Vui lòng nhập địa chỉ."; return; }
-        if (!orderData.recipientName || !orderData.recipientPhone) { addressError.value = "Thiếu thông tin người nhận."; return; }
-        
-        finalRecipientName = orderData.recipientName;
-        finalRecipientPhone = orderData.recipientPhone;
-        finalShippingAddress = orderData.shippingAddress;
+    if (!selectedAddressId.value) {
+        addressError.value = "Vui lòng chọn một địa chỉ giao hàng.";
+        return;
     }
 
+    // Tìm trong mảng savedAddresses xem địa chỉ nào khớp với ID được chọn
+    const addr = savedAddresses.value.find(a => a.id === selectedAddressId.value);
+    
+    let finalRecipientName = addr.fullname;
+    let finalRecipientPhone = addr.phone;
+    let finalShippingAddress = addr.addressLine + ', ' + addr.ward + ', ' + addr.district + ', ' + addr.province;
+
+    // Đóng gói DTO (Data Transfer Object) để gửi lên Server
     const orderDTO = {
         recipientName: finalRecipientName,
         recipientPhone: finalRecipientPhone,
@@ -226,16 +251,16 @@ const submitOrder = async () => {
 
     try {
         const res = await apiClient.post('/orders', orderDTO);
-        
-        if (checkoutModalInstance) checkoutModalInstance.hide();
+        if (checkoutModalInstance) checkoutModalInstance.hide(); // Đóng form thanh toán
 
+        // Xử lý nhánh rẽ: Thanh toán Bank vs Thanh toán COD
         if (orderData.paymentMethod === 'BANK') {
             createdOrder.value = res.data; 
-            if (qrModalInstance) qrModalInstance.show();
-            startPollingOrder(createdOrder.value.id);
+            if (qrModalInstance) qrModalInstance.show(); // Bật form QR
+            startPollingOrder(createdOrder.value.id); // Chạy tiến trình kiểm tra tiền vào
         } else {
             await Swal.fire({ title: 'Thành công!', text: 'Đơn hàng đã được tạo.', icon: 'success' });
-            router.push('/order-history');
+            router.push('/order-history'); // Chuyển sang lịch sử đơn
         }
     } catch (error) {
         console.error(error);
@@ -244,6 +269,7 @@ const submitOrder = async () => {
     }
 };
 
+// [POLLING KIỂM TRA THANH TOÁN QR]
 const startPollingOrder = (orderId) => {
     if (pollingInterval) clearInterval(pollingInterval);
     pollingInterval = setInterval(async () => {
@@ -263,7 +289,7 @@ const startPollingOrder = (orderId) => {
                 router.push('/order-history');
             }
         } catch (error) { console.error("Lỗi polling:", error); }
-    }, 2500);
+    }, 2500); // 2.5s gọi API 1 lần
 };
 
 onBeforeUnmount(() => {
@@ -278,6 +304,7 @@ onMounted(() => {
     fetchCartItems();
     fetchBankInfo();
     
+    // Khởi tạo các Modal Bootstrap
     const checkoutEl = document.getElementById('checkoutModal');
     if (checkoutEl) checkoutModalInstance = new bootstrap.Modal(checkoutEl);
     
@@ -295,7 +322,9 @@ onMounted(() => {
                 <table class="table table-hover align-middle bg-white mb-0">
                     <thead class="table-dark">
                         <tr>
-                            <th class="text-center py-3">Chọn</th>
+                            <th class="text-center py-3" style="width: 60px;">
+                                <input type="checkbox" v-model="selectAll" class="form-check-input select-checkbox cursor-pointer" title="Chọn tất cả">
+                            </th>
                             <th class="py-3">Sản phẩm</th> 
                             <th class="py-3">Đơn giá</th>
                             <th class="py-3" style="width: 160px;">Số lượng (Kg)</th>
@@ -381,36 +410,19 @@ onMounted(() => {
                             <div class="row">
                                 <div class="col-md-7 border-end">
                                     <div class="mb-4">
-                                        <label class="form-label fw-bold">1. Thông tin người nhận & Địa chỉ</label>
-                                        
-                                        <div class="d-flex gap-3 mb-3" v-if="savedAddresses.length > 0">
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="radio" v-model="addressType" value="saved" id="addrSaved">
-                                                <label class="form-check-label cursor-pointer" for="addrSaved">Sổ địa chỉ ({{ savedAddresses.length }})</label>
-                                            </div>
-                                            <div class="form-check">
-                                                <input class="form-check-input" type="radio" v-model="addressType" value="new" id="addrNew">
-                                                <label class="form-check-label cursor-pointer" for="addrNew">Nhập địa chỉ mới</label>
-                                            </div>
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <label class="form-label fw-bold mb-0">1. Thông tin người nhận & Địa chỉ</label>
+                                            <router-link to="/profile" class="btn btn-link btn-sm text-decoration-none p-0">Sửa thông tin</router-link>
                                         </div>
-
-                                        <div v-if="addressType === 'saved' && savedAddresses.length > 0" class="list-group">
+                                        
+                                        <div class="list-group">
                                             <label v-for="addr in savedAddresses" :key="addr.id" class="list-group-item list-group-item-action d-flex align-items-center cursor-pointer">
                                                 <input class="form-check-input me-3" type="radio" :value="addr.id" v-model="selectedAddressId">
                                                 <div>
                                                     <div class="fw-bold">{{ addr.fullname }} - {{ addr.phone }} <span v-if="addr.isDefault" class="badge bg-primary ms-1">Mặc định</span></div>
-                                                    <div class="small text-secondary">{{ addr.addressLine }}, {{ addr.ward }}, {{ addr.district }}, {{ addr.province }}</div>
+                                                    <div class="small text-secondary mt-1">{{ addr.addressLine }}, {{ addr.ward }}, {{ addr.district }}, {{ addr.province }}</div>
                                                 </div>
                                             </label>
-                                            <router-link to="/profile" class="btn btn-outline-primary btn-sm mt-2 w-100"><i class="bi bi-gear"></i> Quản lý sổ địa chỉ</router-link>
-                                        </div>
-
-                                        <div v-else>
-                                            <div class="row g-2 mb-2">
-                                                <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientName" placeholder="Họ và tên người nhận" required></div>
-                                                <div class="col-md-6"><input type="text" class="form-control" v-model="orderData.recipientPhone" placeholder="Số điện thoại" required></div>
-                                            </div>
-                                            <textarea v-model="orderData.shippingAddress" class="form-control" rows="3" placeholder="Số nhà, tên đường, phường/xã, quận/huyện, tỉnh/thành..." required></textarea>
                                         </div>
                                         
                                         <div v-if="addressError" class="text-danger small mt-2"><i class="bi bi-exclamation-circle"></i> {{ addressError }}</div>
@@ -434,6 +446,7 @@ onMounted(() => {
                                         <textarea v-model="orderData.notes" class="form-control" rows="2" placeholder="Ví dụ: Giao hàng giờ hành chính..."></textarea>
                                     </div>
                                 </div>
+                                
                                 <div class="col-md-5 bg-light p-3 rounded">
                                     <h6 class="fw-bold border-bottom pb-2 mb-3">Đơn hàng của bạn</h6>
                                     <div style="max-height: 250px; overflow-y: auto;">
