@@ -38,8 +38,37 @@ const shopBank = ref({
 // Dữ liệu đơn hàng chuẩn bị gửi đi
 const orderData = reactive({
     notes: '', // Khách hàng chỉ được phép nhập ghi chú, không được nhập địa chỉ
-    paymentMethod: 'COD'
+    paymentMethod: 'COD',
+    voucherCode: '' // THÊM: Mã voucher áp dụng
 });
+
+// ========== THÊM CÁC STATE CHO VOUCHER ==========
+const applyingVoucher = ref(false);
+const voucherMessage = ref('');
+const voucherMessageType = ref(''); // 'text-success', 'text-danger', 'text-warning'
+const voucherDiscount = ref(0);
+const appliedVoucher = ref(null);
+
+// ========== THÊM: HÀM ĐÁNH DẤU VOUCHER ĐÃ DÙNG ==========
+const markVoucherAsUsed = (voucherCode) => {
+    // Lấy danh sách voucher đã dùng
+    let usedVouchers = JSON.parse(localStorage.getItem('usedVouchers') || '[]');
+    
+    // Nếu chưa có thì thêm vào
+    if (!usedVouchers.includes(voucherCode)) {
+        usedVouchers.push(voucherCode);
+        localStorage.setItem('usedVouchers', JSON.stringify(usedVouchers));
+    }
+    
+    // Cập nhật trạng thái used trong danh sách voucher đã lưu
+    let savedVouchers = JSON.parse(localStorage.getItem('savedVouchers') || '[]');
+    const index = savedVouchers.findIndex(v => v.code === voucherCode);
+    if (index !== -1) {
+        savedVouchers[index].used = true;
+        localStorage.setItem('savedVouchers', JSON.stringify(savedVouchers));
+    }
+};
+// ========== KẾT THÚC THÊM ==========
 
 // ============================================================================
 // 2. COMPUTED (Tính toán dữ liệu tự động)
@@ -54,6 +83,22 @@ const selectedItems = computed(() => {
 // Tính tổng tiền của các mặt hàng ĐANG ĐƯỢC CHỌN
 const totalSelectedAmount = computed(() => {
     return selectedItems.value.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+});
+
+// THÊM: Tính tổng tiền sau khi áp dụng voucher
+const finalTotalAmount = computed(() => {
+    let total = totalSelectedAmount.value;
+    if (voucherDiscount.value > 0 && voucherDiscount.value <= total) {
+        return total - voucherDiscount.value;
+    }
+    return total;
+});
+
+// THÊM: Lấy icon cho thông báo voucher
+const voucherMessageIcon = computed(() => {
+    if (voucherMessageType.value === 'text-success') return 'bi-check-circle-fill';
+    if (voucherMessageType.value === 'text-danger') return 'bi-exclamation-triangle-fill';
+    return 'bi-info-circle-fill';
 });
 
 // CHECKBOX CHỌN TẤT CẢ (Writable Computed)
@@ -102,6 +147,12 @@ const formatPrice = (value) => {
     return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value || 0);
 };
 
+// THÊM: Format ngày cho voucher
+const formatDate = (dateString) => {
+    if (!dateString) return '';
+    return new Date(dateString).toLocaleDateString('vi-VN');
+};
+
 // ============================================================================
 // 4. LOGIC XỬ LÝ GIỎ HÀNG (Lấy, Thêm, Xóa, Sửa số lượng)
 // ============================================================================
@@ -122,6 +173,121 @@ const fetchBankInfo = async () => {
     try {
         shopBank.value = { bankId: 'TPB', accountNo: '0901111222', accountName: 'TRAI CAY BAY SHOP' };
     } catch (error) { console.error('Lỗi bank info:', error); }
+};
+
+// ========== THÊM: HÀM ÁP DỤNG VOUCHER ==========
+const applyVoucher = async () => {
+    if (!orderData.voucherCode || orderData.voucherCode.trim() === '') {
+        voucherMessage.value = 'Vui lòng nhập mã voucher!';
+        voucherMessageType.value = 'text-warning';
+        return;
+    }
+    
+    applyingVoucher.value = true;
+    voucherMessage.value = '';
+    voucherDiscount.value = 0;
+    
+    try {
+        const code = orderData.voucherCode.toUpperCase().trim();
+        const response = await apiClient.get(`/vouchers/${code}`);
+        const voucher = response.data;
+        
+        // Kiểm tra voucher có công khai không
+        if (voucher.visibility !== 'public') {
+            voucherMessage.value = 'Mã voucher không hợp lệ!';
+            voucherMessageType.value = 'text-danger';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        // Kiểm tra trạng thái
+        if (voucher.status !== 'published') {
+            voucherMessage.value = 'Mã voucher chưa được kích hoạt!';
+            voucherMessageType.value = 'text-danger';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        // Kiểm tra ngày hiệu lực
+        const today = new Date();
+        const startDate = new Date(voucher.startDate);
+        const endDate = new Date(voucher.expiryDate);
+        
+        if (today < startDate) {
+            voucherMessage.value = `Voucher có hiệu lực từ ${formatDate(voucher.startDate)}!`;
+            voucherMessageType.value = 'text-warning';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        if (today > endDate) {
+            voucherMessage.value = 'Voucher đã hết hạn!';
+            voucherMessageType.value = 'text-danger';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        // Kiểm tra số lượng còn
+        if (voucher.usageLimit > 0 && voucher.usedCount >= voucher.usageLimit) {
+            voucherMessage.value = 'Voucher đã hết số lượng sử dụng!';
+            voucherMessageType.value = 'text-danger';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        // ========== THÊM: KIỂM TRA SỐ LẦN USER ĐÃ DÙNG VOUCHER ==========
+        try {
+            const usageResponse = await apiClient.get(`/orders/check-voucher-usage/${code}`);
+            const userUsageCount = usageResponse.data;
+            if (userUsageCount >= voucher.perUserLimit) {
+                voucherMessage.value = `Bạn đã sử dụng voucher này ${userUsageCount} lần. Giới hạn mỗi người chỉ ${voucher.perUserLimit} lần!`;
+                voucherMessageType.value = 'text-danger';
+                appliedVoucher.value = null;
+                voucherDiscount.value = 0;
+                return;
+            }
+        } catch (error) {
+            console.error('Lỗi kiểm tra số lần sử dụng:', error);
+        }
+        // ========== KẾT THÚC THÊM ==========
+        
+        // Kiểm tra điều kiện đơn hàng tối thiểu
+        if (voucher.minOrderValue > 0 && voucher.minOrderValue > totalSelectedAmount.value) {
+            voucherMessage.value = `Đơn hàng tối thiểu ${formatPrice(voucher.minOrderValue)} mới được áp dụng!`;
+            voucherMessageType.value = 'text-warning';
+            appliedVoucher.value = null;
+            return;
+        }
+        
+        // Tính số tiền giảm
+        let discount = 0;
+        if (voucher.type === 'percentage') {
+            discount = (totalSelectedAmount.value * voucher.value) / 100;
+            // Giới hạn giảm tối đa (nếu có)
+            if (voucher.maxDiscountAmount && voucher.maxDiscountAmount > 0 && discount > voucher.maxDiscountAmount) {
+                discount = voucher.maxDiscountAmount;
+            }
+        } else {
+            discount = voucher.value;
+            if (discount > totalSelectedAmount.value) {
+                discount = totalSelectedAmount.value;
+            }
+        }
+        
+        voucherDiscount.value = discount;
+        appliedVoucher.value = voucher;
+        voucherMessage.value = `Áp dụng thành công! Giảm ${voucher.type === 'percentage' ? voucher.value + '%' : formatPrice(voucher.value)}`;
+        voucherMessageType.value = 'text-success';
+        
+    } catch (error) {
+        console.error('Lỗi áp dụng voucher:', error);
+        voucherMessage.value = 'Mã voucher không hợp lệ!';
+        voucherMessageType.value = 'text-danger';
+        voucherDiscount.value = 0;
+        appliedVoucher.value = null;
+    } finally {
+        applyingVoucher.value = false;
+    }
 };
 
 // [TÍNH NĂNG ĐIỀU CHỈNH SỐ LƯỢNG]: Gọi API cập nhật ngay khi bấm nút +/-
@@ -242,7 +408,7 @@ const submitOrder = async () => {
         shippingAddress: finalShippingAddress,
         notes: orderData.notes,
         paymentMethod: orderData.paymentMethod,
-        voucherCode: null,
+        voucherCode: appliedVoucher.value ? appliedVoucher.value.code : null, // THAY ĐỔI: gửi voucher đã áp dụng
         items: selectedItems.value.map(item => ({
             productId: item.product.id,
             quantity: item.quantity
@@ -260,6 +426,16 @@ const submitOrder = async () => {
             startPollingOrder(createdOrder.value.id); // Chạy tiến trình kiểm tra tiền vào
         } else {
             await Swal.fire({ title: 'Thành công!', text: 'Đơn hàng đã được tạo.', icon: 'success' });
+            
+            // ========== THÊM: PHÁT SỰ KIỆN ĐỂ ĐÁNH DẤU VOUCHER ĐÃ DÙNG ==========
+            if (appliedVoucher.value) {
+                markVoucherAsUsed(appliedVoucher.value.code);
+                window.dispatchEvent(new CustomEvent('voucher-used', { 
+                    detail: { code: appliedVoucher.value.code } 
+                }));
+            }
+            // ========== KẾT THÚC THÊM ==========
+            
             router.push('/order-history'); // Chuyển sang lịch sử đơn
         }
     } catch (error) {
@@ -286,6 +462,16 @@ const startPollingOrder = (orderId) => {
                     timer: 3000,
                     showConfirmButton: false
                 });
+                
+                // ========== THÊM: PHÁT SỰ KIỆN CHO THANH TOÁN BANK ==========
+                if (appliedVoucher.value) {
+                    markVoucherAsUsed(appliedVoucher.value.code);
+                    window.dispatchEvent(new CustomEvent('voucher-used', { 
+                        detail: { code: appliedVoucher.value.code } 
+                    }));
+                }
+                // ========== KẾT THÚC THÊM ==========
+                
                 router.push('/order-history');
             }
         } catch (error) { console.error("Lỗi polling:", error); }
@@ -378,7 +564,7 @@ onMounted(() => {
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-center mb-3">
                                 <span class="fw-semibold">Tổng thanh toán ({{ selectedItems.length }} sp):</span>
-                                <span class="text-danger fs-4 fw-bold">{{ formatPrice(totalSelectedAmount) }}</span>
+                                <span class="text-danger fs-4 fw-bold">{{ formatPrice(finalTotalAmount) }}</span>
                             </div>
                             <div v-if="isAuthenticated">
                                 <button @click="checkout" class="btn btn-success w-100 py-2 fw-bold text-uppercase shadow-sm" :disabled="selectedItems.length === 0">Tiến hành đặt hàng</button>
@@ -441,6 +627,22 @@ onMounted(() => {
                                             </div>
                                         </div>
                                     </div>
+                                    
+                                    <!-- THÊM: Mã giảm giá -->
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Mã giảm giá (nếu có)</label>
+                                        <div class="input-group">
+                                            <input type="text" class="form-control" v-model="orderData.voucherCode" 
+                                                   placeholder="Nhập mã voucher..." style="text-transform: uppercase">
+                                            <button class="btn btn-outline-primary" type="button" @click="applyVoucher" :disabled="applyingVoucher">
+                                                <i class="bi bi-ticket-perforated me-1"></i> {{ applyingVoucher ? 'Đang áp dụng...' : 'Áp dụng' }}
+                                            </button>
+                                        </div>
+                                        <div v-if="voucherMessage" class="small mt-1" :class="voucherMessageType">
+                                            <i :class="'bi ' + voucherMessageIcon"></i> {{ voucherMessage }}
+                                        </div>
+                                    </div>
+                                    
                                     <div class="mb-3">
                                         <label class="form-label fw-bold">Ghi chú (Tùy chọn)</label>
                                         <textarea v-model="orderData.notes" class="form-control" rows="2" placeholder="Ví dụ: Giao hàng giờ hành chính..."></textarea>
@@ -460,7 +662,14 @@ onMounted(() => {
                                     </div>
                                     <div class="mt-3 pt-2 border-top">
                                         <div class="d-flex justify-content-between mb-1"><span>Tạm tính:</span><span>{{ formatPrice(totalSelectedAmount) }}</span></div>
-                                        <div class="d-flex justify-content-between fs-5 fw-bold text-danger mt-2"><span>Tổng cộng:</span><span>{{ formatPrice(totalSelectedAmount) }}</span></div>
+                                        <div v-if="voucherDiscount > 0" class="d-flex justify-content-between mb-1 text-success">
+                                            <span><i class="bi bi-ticket-perforated me-1"></i> Giảm giá:</span>
+                                            <span>- {{ formatPrice(voucherDiscount) }}</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between fs-5 fw-bold text-danger mt-2">
+                                            <span>Tổng cộng:</span>
+                                            <span>{{ formatPrice(finalTotalAmount) }}</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>

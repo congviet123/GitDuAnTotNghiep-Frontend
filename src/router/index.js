@@ -63,6 +63,13 @@ const router = createRouter({
       component: () => import('@/views/site/LikedNews.vue'),
       meta: { requiresAuth: true }
     },
+    //Voucher khách hàng
+    {
+      path: '/my-vouchers',
+      name: 'my-vouchers',
+      component: () => import('@/views/site/MyVouchers.vue'),
+      meta: { requiresAuth: true }
+    },
     {
       path: '/profile', // Route này bạn đã khai báo đúng, nên nó phải chạy
       name: 'profile',
@@ -116,6 +123,8 @@ const router = createRouter({
         { path: 'contact-cms', component: () => import('@/views/admin/ContactManagement.vue') },
         { path: 'suppliers', component: () => import('@/views/admin/SupplierManagement.vue') },
         { path: 'imports', component: () => import('@/views/admin/ImportManagement.vue') },
+        // THÊM ROUTE MỚI CHO QUẢN LÝ VOUCHER
+        { path: 'vouchers', component: () => import('@/views/admin/VoucherManagement.vue') },
       ]
     },
 

@@ -1,12 +1,55 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import apiClient from '@/services/api';
 // [MỚI] Import cartStore để xử lý luồng thêm giỏ hàng thông minh
 import { useCartStore } from '@/store/cart'; 
+import { voucherService } from '@/services/voucherService'; // THÊM: Import voucherService
 
 const router = useRouter();
 const cartStore = useCartStore();
+
+// ========== THÊM: STATE CHO VOUCHER ==========
+const availableVouchers = ref([]);
+const showVoucherNotice = ref(false);
+
+// ========== THÊM: STATE CHO ICON CUỘN LÊN ĐẦU TRANG ==========
+const showScrollTop = ref(false);
+
+// Kiểm tra có voucher khuyến mãi đang có không
+const checkAvailableVouchers = async () => {
+    try {
+        const response = await voucherService.getPublicVouchers();
+        availableVouchers.value = response.data.filter(v => {
+            const today = new Date();
+            const start = new Date(v.startDate);
+            const end = new Date(v.expiryDate);
+            today.setHours(0, 0, 0, 0);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            return today >= start && today <= end;
+        });
+        showVoucherNotice.value = availableVouchers.value.length > 0;
+    } catch (error) {
+        console.error("Lỗi kiểm tra voucher:", error);
+    }
+};
+
+// Chuyển đến trang giới thiệu và cuộn xuống phần voucher
+const goToVouchers = () => {
+    router.push({ path: '/about', query: { scrollTo: 'voucher' } });
+};
+
+// Xử lý cuộn trang để hiển thị/ẩn icon cuộn lên đầu
+const handleScroll = () => {
+    showScrollTop.value = window.scrollY > 300;
+};
+
+// Cuộn lên đầu trang
+const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+// ========== KẾT THÚC THÊM ==========
 
 // Cấu hình Banner Carousel
 const banners = ref([
@@ -34,11 +77,24 @@ onMounted(async () => {
         discountProducts.value = resDiscount.data;
         bestSellerProducts.value = resBest.data;
         newProducts.value = resNew.data;
+        
+        // THÊM: Kiểm tra voucher khuyến mãi
+        await checkAvailableVouchers();
+        
+        // THÊM: Lắng nghe sự kiện cuộn trang
+        window.addEventListener('scroll', handleScroll);
+        handleScroll(); // Gọi ngay để kiểm tra trạng thái ban đầu
+        
     } catch (err) {
         console.error("Lỗi tải trang chủ", err);
     } finally {
         isLoading.value = false;
     }
+});
+
+// THÊM: Dọn dẹp sự kiện khi component bị hủy
+onBeforeUnmount(() => {
+    window.removeEventListener('scroll', handleScroll);
 });
 
 // Hàm xử lý ảnh chuẩn xác 
@@ -99,6 +155,24 @@ const addToCart = async (product) => {
                 </button>
             </div>
         </div>
+
+        <!-- THÊM: Icon thông báo voucher () -->
+        <div v-if="showVoucherNotice" class="voucher-float-btn" @click="goToVouchers">
+            <div class="voucher-icon">
+                <i class="bi bi-gift-fill"></i>
+                <span class="voucher-badge">{{ availableVouchers.length }}</span>
+            </div>
+            <div class="voucher-tooltip">
+                <i class="bi bi-ticket-perforated me-1"></i>
+                Có {{ availableVouchers.length }} mã giảm giá đang chờ bạn!
+            </div>
+        </div>
+        
+        <!-- THÊM: Icon cuộn lên đầu trang (đặt ở dưới, cách đáy 30px) -->
+        <div class="scroll-top-btn" @click="scrollToTop" :class="{ show: showScrollTop }">
+            <i class="bi bi-arrow-up"></i>
+        </div>
+        <!-- ========== KẾT THÚC THÊM ========== -->
 
         <div class="container my-4">
             
@@ -209,4 +283,124 @@ const addToCart = async (product) => {
 .product-card { transition: transform 0.3s, box-shadow 0.3s; border: 1px solid #eee; }
 .product-card:hover { transform: translateY(-5px); box-shadow: 0 10px 20px rgba(0,0,0,0.1); }
 .product-img { height: 180px; object-fit: contain; padding: 15px; }
+
+/* THÊM: CSS cho icon voucher nổi - đặt ở trên (cách đáy 100px) */
+.voucher-float-btn {
+    position: fixed;
+    bottom: 100px;
+    right: 30px;
+    z-index: 999;
+    cursor: pointer;
+    animation: bounce 1s ease infinite;
+}
+
+.voucher-icon {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, #ff6b01, #ff8c3a);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 5px 20px rgba(255, 107, 1, 0.4);
+    transition: transform 0.3s;
+}
+
+.voucher-icon i {
+    font-size: 28px;
+    color: white;
+}
+
+.voucher-icon:hover {
+    transform: scale(1.1);
+}
+
+.voucher-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #dc3545;
+    color: white;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border: 2px solid white;
+}
+
+.voucher-tooltip {
+    position: absolute;
+    right: 70px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #333;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 30px;
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+}
+
+.voucher-tooltip::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent transparent #333;
+}
+
+.voucher-float-btn:hover .voucher-tooltip {
+    opacity: 1;
+    visibility: visible;
+    right: 80px;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+
+/* THÊM: CSS cho icon cuộn lên đầu trang - đặt ở dưới (cách đáy 30px) */
+.scroll-top-btn {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 999;
+    cursor: pointer;
+    background: #28a745;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 24px;
+    transition: all 0.3s;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+    opacity: 0;
+    visibility: hidden;
+}
+
+.scroll-top-btn.show {
+    opacity: 1;
+    visibility: visible;
+}
+
+.scroll-top-btn:hover {
+    background: #218838;
+    transform: translateY(-5px);
+}
 </style>

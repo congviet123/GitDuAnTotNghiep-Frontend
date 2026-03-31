@@ -2,6 +2,7 @@
 import { ref, onMounted, reactive, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import apiClient from '@/services/api';
+import { voucherService } from '@/services/voucherService';
 
 const articles = ref([]);
 const isLoading = ref(false);
@@ -15,6 +16,34 @@ const pageSize = ref(6);
 const filters = reactive({
     keyword: ''
 });
+
+// THÊM: State cho voucher
+const availableVouchers = ref([]);
+const showVoucherNotice = ref(false);
+
+// THÊM: Kiểm tra voucher khuyến mãi
+const checkAvailableVouchers = async () => {
+    try {
+        const response = await voucherService.getPublicVouchers();
+        availableVouchers.value = response.data.filter(v => {
+            const today = new Date();
+            const start = new Date(v.startDate);
+            const end = new Date(v.expiryDate);
+            today.setHours(0, 0, 0, 0);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            return today >= start && today <= end;
+        });
+        showVoucherNotice.value = availableVouchers.value.length > 0;
+    } catch (error) {
+        console.error("Lỗi kiểm tra voucher:", error);
+    }
+};
+
+// THÊM: Chuyển đến trang giới thiệu và cuộn xuống phần voucher
+const goToVouchers = () => {
+    router.push({ path: '/about', query: { scrollTo: 'voucher' } });
+};
 
 const formatDate = (dateString) => {
     if (!dateString) return '';
@@ -116,6 +145,7 @@ watch(
 
 onMounted(async () => {
     await fetchNews(0);
+    await checkAvailableVouchers();
 });
 </script>
 
@@ -124,6 +154,18 @@ onMounted(async () => {
         <div class="text-center mb-5">
             <h2 class="fw-bold text-uppercase text-primary-blue">Tin Tức & Sự Kiện</h2>
             <p class="text-muted">Cập nhật những kiến thức dinh dưỡng và ưu đãi mới nhất</p>
+        </div>
+
+        <!-- THÊM: Icon voucher nổi -->
+        <div v-if="showVoucherNotice" class="voucher-float-btn" @click="goToVouchers">
+            <div class="voucher-icon">
+                <i class="bi bi-gift-fill"></i>
+                <span class="voucher-badge">{{ availableVouchers.length }}</span>
+            </div>
+            <div class="voucher-tooltip">
+                <i class="bi bi-ticket-perforated me-1"></i>
+                Có {{ availableVouchers.length }} mã giảm giá đang chờ bạn!
+            </div>
         </div>
 
         <div v-if="isLoading" class="text-center py-5">
@@ -208,5 +250,93 @@ onMounted(async () => {
 .pagination .page-link {
     color: #007bff;
     cursor: pointer;
+}
+
+/* THÊM: CSS cho icon voucher nổi */
+.voucher-float-btn {
+    position: fixed;
+    bottom: 100px;
+    right: 30px;
+    z-index: 999;
+    cursor: pointer;
+    animation: bounce 1s ease infinite;
+}
+
+.voucher-icon {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, #ff6b01, #ff8c3a);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 5px 20px rgba(255, 107, 1, 0.4);
+    transition: transform 0.3s;
+}
+
+.voucher-icon i {
+    font-size: 28px;
+    color: white;
+}
+
+.voucher-icon:hover {
+    transform: scale(1.1);
+}
+
+.voucher-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #dc3545;
+    color: white;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border: 2px solid white;
+}
+
+.voucher-tooltip {
+    position: absolute;
+    right: 70px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #333;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 30px;
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+}
+
+.voucher-tooltip::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent transparent #333;
+}
+
+.voucher-float-btn:hover .voucher-tooltip {
+    opacity: 1;
+    visibility: visible;
+    right: 80px;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
 }
 </style>

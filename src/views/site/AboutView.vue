@@ -1,6 +1,11 @@
 <script setup>
 import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 import aboutService from '@/services/aboutService';
+import { voucherService } from '@/services/voucherService';
+import Swal from 'sweetalert2';
+
+const route = useRoute();
 
 // Hàm xử lý đường dẫn ảnh bị lỗi
 const fixImageUrl = (url) => {
@@ -8,20 +13,16 @@ const fixImageUrl = (url) => {
     
     let fixedUrl = url;
     
-    // Xử lý lỗi 2 lần /imgs
     if (fixedUrl.includes('/imgs//imgs/')) {
         fixedUrl = fixedUrl.replace('/imgs//imgs/', '/imgs/');
     }
-    // Xử lý trường hợp /imgs/imgs/ (không có dấu / thừa)
     else if (fixedUrl.includes('/imgs/imgs/')) {
         fixedUrl = fixedUrl.replace('/imgs/imgs/', '/imgs/');
     }
-    // Xử lý lỗi /imos/ thành /imgs/
     else if (fixedUrl.includes('/imos/')) {
         fixedUrl = fixedUrl.replace('/imos/', '/imgs/');
     }
     
-    // Đảm bảo URL bắt đầu bằng /
     if (!fixedUrl.startsWith('/') && !fixedUrl.startsWith('http')) {
         fixedUrl = '/' + fixedUrl;
     }
@@ -45,12 +46,140 @@ const aboutData = ref({
     partners: []
 });
 
+// STATE CHO VOUCHER
+const publicVouchers = ref([]);
+const isLoadingVouchers = ref(false);
+const showVoucherNotice = ref(false);
+const availableVouchers = ref([]);
+
+// Lấy danh sách voucher công khai
+const loadPublicVouchers = async () => {
+    isLoadingVouchers.value = true;
+    try {
+        const response = await voucherService.getPublicVouchers();
+        publicVouchers.value = response.data;
+        // Kiểm tra voucher còn hiệu lực để hiển thị icon
+        availableVouchers.value = response.data.filter(v => {
+            const today = new Date();
+            const start = new Date(v.startDate);
+            const end = new Date(v.expiryDate);
+            today.setHours(0, 0, 0, 0);
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            return today >= start && today <= end;
+        });
+        showVoucherNotice.value = availableVouchers.value.length > 0;
+    } catch (error) {
+        console.error("Lỗi tải voucher:", error);
+    } finally {
+        isLoadingVouchers.value = false;
+    }
+};
+
+// Format tiền tệ
+const formatPrice = (value) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(value || 0);
+};
+
+// Format ngày
+const formatDate = (dateString) => {
+    if (!dateString) return '';
+    return new Date(dateString).toLocaleDateString('vi-VN');
+};
+
+// Kiểm tra voucher còn hiệu lực
+const isVoucherValid = (startDate, expiryDate) => {
+    if (!startDate || !expiryDate) return false;
+    const today = new Date();
+    const start = new Date(startDate);
+    const expiry = new Date(expiryDate);
+    today.setHours(0, 0, 0, 0);
+    start.setHours(0, 0, 0, 0);
+    expiry.setHours(0, 0, 0, 0);
+    return today >= start && today <= expiry;
+};
+
+// Chuyển đến phần voucher (cuộn xuống)
+const goToVouchers = () => {
+    const element = document.getElementById('voucher-section');
+    if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+};
+
+// Lưu voucher vào localStorage
+const saveVoucher = (voucher) => {
+    // Lấy danh sách voucher đã lưu từ localStorage
+    let savedVouchers = JSON.parse(localStorage.getItem('savedVouchers') || '[]');
+    // Lấy danh sách voucher đã dùng
+    let usedVouchers = JSON.parse(localStorage.getItem('usedVouchers') || '[]');
+    
+    // Kiểm tra đã lưu chưa
+    if (savedVouchers.some(v => v.code === voucher.code)) {
+        Swal.fire({
+            icon: 'info',
+            title: 'Đã lưu rồi!',
+            text: `Voucher ${voucher.code} đã có trong danh sách của bạn.`,
+            timer: 1500,
+            showConfirmButton: false
+        });
+        return;
+    }
+    
+    // Kiểm tra xem voucher này đã từng dùng chưa (trong lịch sử đã dùng)
+    const isUsed = usedVouchers.includes(voucher.code);
+    
+    // Thêm voucher mới vào danh sách
+    savedVouchers.push({
+        code: voucher.code,
+        name: voucher.name,
+        description: voucher.description,
+        type: voucher.type,
+        value: voucher.value,
+        minOrderValue: voucher.minOrderValue,
+        startDate: voucher.startDate,
+        expiryDate: voucher.expiryDate,
+        used: isUsed, // Nếu đã từng dùng thì đánh dấu used = true
+        savedDate: new Date().toISOString()
+    });
+    
+    // Lưu lại vào localStorage
+    localStorage.setItem('savedVouchers', JSON.stringify(savedVouchers));
+    
+    if (isUsed) {
+        Swal.fire({
+            icon: 'warning',
+            title: 'Voucher đã sử dụng!',
+            text: `Voucher ${voucher.code} đã được sử dụng trước đó, không thể dùng lại.`,
+            timer: 2000,
+            showConfirmButton: false
+        });
+    } else {
+        Swal.fire({
+            icon: 'success',
+            title: 'Đã lưu!',
+            text: `Voucher ${voucher.code} đã được lưu vào danh sách của bạn.`,
+            timer: 1500,
+            showConfirmButton: false
+        });
+    }
+};
+
+// Hàm cuộn đến phần voucher
+const scrollToVoucher = () => {
+    const element = document.getElementById('voucher-section');
+    if (element) {
+        setTimeout(() => {
+            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 300);
+    }
+};
+
 const loadAboutData = async () => {
     try {
         const response = await aboutService.getAboutPage();
         let data = response.data;
         
-        // Fix đường dẫn ảnh trong dữ liệu
         if (data.bannerImage) {
             data.bannerImage = fixImageUrl(data.bannerImage);
         }
@@ -76,6 +205,11 @@ const loadAboutData = async () => {
 
 onMounted(() => {
     loadAboutData();
+    loadPublicVouchers();
+    
+    if (route.query.scrollTo === 'voucher') {
+        scrollToVoucher();
+    }
 });
 </script>
 
@@ -91,6 +225,18 @@ onMounted(() => {
                 <p class="fs-5">{{ aboutData.bannerSubtitle }}</p>
             </div>
             <div class="overlay"></div>
+        </div>
+
+        <!-- THÊM: Icon voucher nổi -->
+        <div v-if="showVoucherNotice" class="voucher-float-btn" @click="goToVouchers">
+            <div class="voucher-icon">
+                <i class="bi bi-gift-fill"></i>
+                <span class="voucher-badge">{{ availableVouchers.length }}</span>
+            </div>
+            <div class="voucher-tooltip">
+                <i class="bi bi-ticket-perforated me-1"></i>
+                Có {{ availableVouchers.length }} mã giảm giá đang chờ bạn!
+            </div>
         </div>
 
         <!-- About Us Section -->
@@ -113,18 +259,74 @@ onMounted(() => {
             </div>
         </div>
 
-        <!-- Newsletter Section -->
-        <div class="bg-light py-5">
+        <!-- DANH SÁCH VOUCHER KHUYẾN MÃI -->
+        <div id="voucher-section" class="bg-light py-5">
             <div class="container">
-                <div class="row align-items-center">
-                    <div class="col-md-6">
-                        <h3 class="fw-bold mb-1">Theo dõi bản tin chính sách điều khoản của chúng tôi</h3>
-                        <p class="text-muted mb-0">{{ aboutData.emailNewsletter }}</p>
+                <div class="text-center mb-4">
+                    <h2 class="fw-bold text-success-custom">
+                        <i class="bi bi-ticket-perforated me-2"></i> KHUYẾN MÃI ĐẶC BIỆT
+                    </h2>
+                    <p class="text-muted">Những mã giảm giá hấp dẫn dành riêng cho bạn</p>
+                </div>
+
+                <div v-if="isLoadingVouchers" class="text-center py-4">
+                    <div class="spinner-border text-success-custom" role="status">
+                        <span class="visually-hidden">Đang tải...</span>
                     </div>
-                    <div class="col-md-6 mt-3 mt-md-0">
-                        <div class="input-group">
-                            <input type="email" class="form-control py-3" placeholder="Nhập email của bạn...">
-                            <button class="btn btn-success-custom text-white px-4 fw-bold" type="button">Đăng ký</button>
+                </div>
+
+                <div v-else-if="publicVouchers.length === 0" class="text-center py-4">
+                    <p class="text-muted">Hiện chưa có chương trình khuyến mãi nào</p>
+                </div>
+
+                <div v-else class="row g-4">
+                    <div v-for="voucher in publicVouchers" :key="voucher.code" class="col-md-6 col-lg-4">
+                        <div class="card voucher-card h-100 border-0 shadow-sm">
+                            <div class="card-body p-4">
+                                <div class="d-flex justify-content-between align-items-start mb-3">
+                                    <div>
+                                        <span class="badge bg-success-custom mb-2">MÃ GIẢM GIÁ</span>
+                                        <h4 class="voucher-code font-monospace mb-0">{{ voucher.code }}</h4>
+                                    </div>
+                                    <span v-if="isVoucherValid(voucher.startDate, voucher.expiryDate)" 
+                                          class="badge bg-success">Còn hiệu lực</span>
+                                    <span v-else class="badge bg-secondary">Hết hạn</span>
+                                </div>
+                                
+                                <h5 class="fw-bold mb-2">{{ voucher.name }}</h5>
+                                <p class="text-muted small mb-3">{{ voucher.description || 'Không có mô tả' }}</p>
+                                
+                                <div class="voucher-value mb-3">
+                                    <span v-if="voucher.type === 'percentage'" class="display-6 fw-bold text-danger">
+                                        {{ voucher.value }}%
+                                    </span>
+                                    <span v-else class="display-6 fw-bold text-danger">
+                                        {{ formatPrice(voucher.value) }}
+                                    </span>
+                                    <span class="text-muted ms-2">giảm</span>
+                                </div>
+                                
+                                <div class="voucher-condition small text-muted mb-3">
+                                    <div v-if="voucher.minOrderValue > 0">
+                                        <i class="bi bi-cart-check me-1"></i> Đơn tối thiểu: {{ formatPrice(voucher.minOrderValue) }}
+                                    </div>
+                                    <div v-else>
+                                        <i class="bi bi-infinity me-1"></i> Không yêu cầu đơn tối thiểu
+                                    </div>
+                                    <div>
+                                        <i class="bi bi-calendar-range me-1"></i> 
+                                        {{ formatDate(voucher.startDate) }} - {{ formatDate(voucher.expiryDate) }}
+                                    </div>
+                                    <div v-if="voucher.usageLimit > 0">
+                                        <i class="bi bi-ticket-perforated me-1"></i> 
+                                        Còn {{ voucher.usageLimit - (voucher.usedCount || 0) }} / {{ voucher.usageLimit }} lượt
+                                    </div>
+                                </div>
+                                
+                                <button class="btn btn-outline-success-custom w-100 mt-2" @click="saveVoucher(voucher)">
+                                    <i class="bi bi-bookmark-plus me-2"></i> Lưu mã
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -177,13 +379,22 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* TÙY CHỈNH MÀU SẮC */
 .text-success-custom { color: #28a745 !important; }
 .bg-success-custom { background-color: #28a745 !important; }
 .btn-success-custom { background-color: #28a745; border-color: #28a745; transition: all 0.3s; }
 .btn-success-custom:hover { background-color: #218838; transform: translateY(-2px); }
+.btn-outline-success-custom {
+    border: 1px solid #28a745;
+    color: #28a745;
+    background: transparent;
+    transition: all 0.3s;
+}
+.btn-outline-success-custom:hover {
+    background-color: #28a745;
+    color: white;
+    transform: translateY(-2px);
+}
 
-/* Banner Style */
 .banner-section {
     background-size: cover;
     background-position: center;
@@ -198,7 +409,6 @@ onMounted(() => {
 }
 .letter-spacing-2 { letter-spacing: 2px; }
 
-/* Image Wrapper */
 .about-image-wrapper {
     display: flex;
     justify-content: center;
@@ -214,7 +424,6 @@ onMounted(() => {
     transform: scale(1.02);
 }
 
-/* Icon Wrapper */
 .icon-wrapper {
     width: 80px; height: 80px;
 }
@@ -222,20 +431,16 @@ onMounted(() => {
     transform: scale(1.1); transition: transform 0.3s;
 }
 
-/* Hover Effect cho Gallery */
 .hover-zoom { transition: transform 0.5s ease; }
 .hover-zoom:hover { transform: scale(1.1); }
 
-/* Logo đối tác màu xám */
 .grayscale-logos h3 {
     opacity: 0.5; transition: opacity 0.3s; cursor: pointer;
 }
 .grayscale-logos h3:hover { opacity: 1; color: #28a745 !important; }
 
-/* Text Justify */
 .text-justify { text-align: justify; }
 
-/* CSS phụ trợ cho ảnh gallery vuông */
 .ratio-1x1 {
     aspect-ratio: 1/1;
 }
@@ -243,5 +448,114 @@ onMounted(() => {
     object-fit: cover;
     width: 100%;
     height: 100%;
+}
+
+.voucher-card {
+    transition: transform 0.3s, box-shadow 0.3s;
+    border-radius: 16px;
+}
+.voucher-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+}
+.voucher-code {
+    background: #f8f9fa;
+    padding: 4px 12px;
+    border-radius: 8px;
+    display: inline-block;
+    letter-spacing: 1px;
+    font-weight: bold;
+}
+.voucher-value {
+    border-top: 1px dashed #dee2e6;
+    padding-top: 12px;
+}
+
+/* THÊM: CSS cho icon voucher nổi */
+.voucher-float-btn {
+    position: fixed;
+    bottom: 100px;
+    right: 30px;
+    z-index: 999;
+    cursor: pointer;
+    animation: bounce 1s ease infinite;
+}
+
+.voucher-icon {
+    position: relative;
+    width: 60px;
+    height: 60px;
+    background: linear-gradient(135deg, #ff6b01, #ff8c3a);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 5px 20px rgba(255, 107, 1, 0.4);
+    transition: transform 0.3s;
+}
+
+.voucher-icon i {
+    font-size: 28px;
+    color: white;
+}
+
+.voucher-icon:hover {
+    transform: scale(1.1);
+}
+
+.voucher-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #dc3545;
+    color: white;
+    border-radius: 50%;
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    border: 2px solid white;
+}
+
+.voucher-tooltip {
+    position: absolute;
+    right: 70px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #333;
+    color: white;
+    padding: 8px 15px;
+    border-radius: 30px;
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.2);
+}
+
+.voucher-tooltip::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: transparent transparent transparent #333;
+}
+
+.voucher-float-btn:hover .voucher-tooltip {
+    opacity: 1;
+    visibility: visible;
+    right: 80px;
+}
+
+@keyframes bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
 }
 </style>

@@ -73,6 +73,12 @@ const handleLogout = () => {
     <i class="bi bi-geo-alt me-3 fs-5"></i>
     <span class="fw-semibold">Quản lý Liên hệ</span>
 </router-link></li>
+
+<!-- THÊM MỤC QUẢN LÝ VOUCHER Ở ĐÂY -->
+<li><router-link to="/admin/vouchers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+    <i class="bi bi-ticket-perforated me-3 fs-5"></i>
+    <span class="fw-semibold">Quản lý Voucher</span>
+</router-link></li>
 <div class="sidebar-heading text-uppercase px-4 mt-4 mb-2 text-white-50 small fw-bold">Kho & Đối tác</div>
 <li><router-link to="/admin/suppliers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
     <i class="bi bi-building me-3 fs-5"></i>

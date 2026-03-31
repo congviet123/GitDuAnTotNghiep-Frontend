@@ -42,7 +42,7 @@ const printConfig = reactive({
 const selectedOrder = reactive({
     id: null, account: {}, totalAmount: 0, createDate: null,
     orderDetails: [], status: '', shippingAddress: '', notes: '', paymentMethod: '',
-    isPrinted: false
+    isPrinted: false, voucherCode: null // THÊM: voucherCode
 });
 
 // Danh sách các trạng thái đơn hàng dùng cho thẻ Select
@@ -63,7 +63,6 @@ const statusOptions = [
 
 // ============================================================================
 // 2. CÁC HÀM TIỆN ÍCH (HELPERS FORMATTER) 
-// Phải đưa lên đây để các hàm bên dưới có thể gọi được
 // ============================================================================
 const translateStatus = (s) => statusOptions.find(opt => opt.value === s)?.label || s;
 const getBadgeClass = (s) => {
@@ -110,6 +109,22 @@ const parsedReturnInfo = computed(() => {
     }
     return { isReturn: false, reason: '', bankingInfo: '', cleanNote: noteRaw };
 });
+
+// ========== THÊM: TÍNH TOÁN GIÁ GỐC VÀ SỐ TIỀN GIẢM ==========
+const originalAmount = computed(() => {
+    if (!selectedOrder.orderDetails || selectedOrder.orderDetails.length === 0) return 0;
+    return selectedOrder.orderDetails.reduce((sum, detail) => {
+        return sum + (detail.price * detail.quantity);
+    }, 0);
+});
+
+const discountAmount = computed(() => {
+    const original = originalAmount.value;
+    const final = selectedOrder.totalAmount || 0;
+    const discount = original - final;
+    return discount > 0 ? discount : 0;
+});
+// ========== KẾT THÚC THÊM ==========
 
 // [TÍNH NĂNG CHỌN TẤT CẢ]: Khi ô selectAll thay đổi, nếu = true thì lấy toàn bộ ID đẩy vào mảng selectedIds
 const toggleSelectAll = () => {
@@ -449,35 +464,35 @@ onMounted(fetchOrders);
               <th class="py-3">Thanh toán</th>
               <th class="py-3">Trạng thái</th>
               <th class="text-end pe-4 py-3">Thao tác</th>
-            </tr>
+             </tr>
           </thead>
           <tbody>
             <tr v-for="order in orders" :key="order.id" :class="{'table-active': selectedIds.includes(order.id)}">
               <td class="ps-3">
                   <input type="checkbox" class="form-check-input" :value="order.id" v-model="selectedIds">
-              </td>
-              <td>
+               </td>
+               <td>
                   <div class="fw-bold">#DH-{{ order.id }}</div>
                   <span v-if="order.isPrinted" class="badge bg-success-subtle text-success border border-success mt-1">
                     <i class="bi bi-check-circle-fill me-1"></i>Đã in
                   </span>
-              </td>
-              <td>
+               </td>
+               <td>
                   <div class="fw-bold text-dark">{{ getOrdererName(order) }}</div>
                   <small class="text-muted">{{ getOrdererEmail(order) }}</small>
-              </td> 
+               </td> 
               <td style="font-size: 0.9rem;">{{ formatDate(order.createDate) }}</td>
               <td class="text-danger fw-bold">{{ formatPrice(order.totalAmount) }}</td> 
-              <td>
+               <td>
                 <span class="badge border shadow-sm" :class="getPaymentMethodClass(order.paymentMethod)">
                     {{ getPaymentMethodName(order.paymentMethod) }}
                 </span>
-              </td>
-              <td>
+               </td>
+               <td>
                 <span class="badge rounded-pill px-3 py-2 shadow-sm" :class="getBadgeClass(order.status)">
                   {{ translateStatus(order.status) }}
                 </span>
-              </td>
+               </td>
               <td class="text-end pe-3 text-nowrap">
                 <button class="btn btn-primary btn-sm me-1 shadow-sm" @click="viewDetails(order.id)" title="Xem chi tiết"><i class="bi bi-eye"></i></button>
                 <button class="btn btn-dark btn-sm me-1 shadow-sm" @click="openPrintModal(order)" title="In hóa đơn"><i class="bi bi-printer-fill"></i></button>
@@ -491,11 +506,11 @@ onMounted(fetchOrders);
                 </button>
 
                 <button v-if="canDelete(order.status)" class="btn btn-outline-danger btn-sm shadow-sm" @click="deleteOrder(order.id)" title="Xóa đơn hàng"><i class="bi bi-trash"></i></button>
-              </td>
-            </tr>
+               </td>
+             </tr>
             <tr v-if="orders.length === 0">
                 <td colspan="8" class="text-center py-5 text-muted fst-italic">Không tìm thấy hóa đơn nào phù hợp.</td>
-            </tr>
+             </tr>
           </tbody>
         </table>
       </div>
@@ -525,6 +540,30 @@ onMounted(fetchOrders);
                         <h6 class="text-secondary fw-bold mb-3">GIAO DỊCH</h6>
                         <div class="card border-0 shadow-sm bg-white p-3">
                             <div class="mb-1"><small>Thanh toán:</small> <span class="fw-bold text-primary">{{ getPaymentMethodName(selectedOrder.paymentMethod) }}</span></div>
+                            
+                            <!-- ========== THÊM: HIỂN THỊ VOUCHER ĐÃ ÁP DỤNG ========== -->
+                            <div v-if="selectedOrder.voucherCode" class="mt-3 p-2 bg-success bg-opacity-10 border border-success rounded">
+                                <h6 class="text-success small fw-bold mb-2"><i class="bi bi-ticket-perforated me-1"></i> MÃ GIẢM GIÁ ĐÃ ÁP DỤNG</h6>
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <span class="fw-bold text-dark font-monospace">{{ selectedOrder.voucherCode }}</span>
+                                    <span class="text-success">Đã giảm {{ formatPrice(discountAmount) }}</span>
+                                </div>
+                                <div class="small border-top pt-2 mt-1">
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-muted">Tổng tiền hàng:</span>
+                                        <span>{{ formatPrice(originalAmount) }}</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between text-success">
+                                        <span>Giảm giá:</span>
+                                        <span>- {{ formatPrice(discountAmount) }}</span>
+                                    </div>
+                                    <div class="d-flex justify-content-between fw-bold">
+                                        <span>Thành tiền:</span>
+                                        <span class="text-danger">{{ formatPrice(selectedOrder.totalAmount) }}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- ========== KẾT THÚC THÊM ========== -->
                             
                             <div v-if="parsedReturnInfo.isReturn" class="alert alert-danger p-2 mt-2 mb-0 small">
                                 <strong>Hoàn tiền:</strong> {{ parsedReturnInfo.reason }}<br>

@@ -10,7 +10,9 @@ import Swal from 'sweetalert2';
 const orders = ref([]); // Danh sách toàn bộ lịch sử đơn hàng của khách
 const selectedOrder = ref({ 
     id: null, orderDetails: [], totalAmount: 0, createDate: null, 
-    notes: '', shippingAddress: '', status: '', paymentMethod: 'COD', account: {}
+    notes: '', shippingAddress: '', status: '', paymentMethod: 'COD', account: {},
+    voucherCode: null, // THÊM: Mã voucher đã áp dụng
+    discountAmount: 0  // THÊM: Số tiền được giảm
 }); // Chi tiết đơn hàng đang được xem khi bấm mở Modal
 const loading = ref(false); // Cờ hiển thị vòng xoay loading
 let pollingInterval = null; // Biến lưu trữ vòng lặp kiểm tra thanh toán QR
@@ -124,6 +126,22 @@ const displayNote = computed(() => {
     }
     return raw;
 });
+
+// ========== THÊM: TÍNH TOÁN GIÁ GỐC VÀ SỐ TIỀN GIẢM ==========
+const originalAmount = computed(() => {
+    if (!selectedOrder.value.orderDetails || selectedOrder.value.orderDetails.length === 0) return 0;
+    return selectedOrder.value.orderDetails.reduce((sum, detail) => {
+        return sum + (detail.price * detail.quantity);
+    }, 0);
+});
+
+const discountAmount = computed(() => {
+    const original = originalAmount.value;
+    const final = selectedOrder.value.totalAmount || 0;
+    const discount = original - final;
+    return discount > 0 ? discount : 0;
+});
+// ========== KẾT THÚC THÊM ==========
 
 // =======================================================================
 // 3. LOGIC GỌI API (Lấy danh sách đơn, Lấy thông tin Ngân hàng)
@@ -511,7 +529,7 @@ onMounted(() => {
                                     </span>
                                 </span>
                                 <span v-else class="text-muted small">-</span>
-                            </td>
+                             </td>
 
                             <td class="text-center">
                                 <button class="btn btn-primary btn-sm me-2 fw-bold" @click="viewDetails(order.id)"><i class="bi bi-eye"></i> Chi tiết</button>
@@ -521,8 +539,8 @@ onMounted(() => {
                                 <button v-if="canReturnOrder(order)" class="btn btn-outline-secondary btn-sm fw-bold me-2" @click="requestReturn(order)">Hoàn trả</button>
                                 
                                 <button v-if="['COMPLETED', 'CANCELLED', 'CANCELLED_REFUNDED'].includes(getEffectiveStatus(order))" class="btn btn-danger btn-sm fw-bold" @click="deleteOrder(order.id)" title="Xóa lịch sử"><i class="bi bi-trash"></i></button>
-                            </td>
-                        </tr>
+                             </td>
+                         </tr>
                     </tbody>
                 </table>
             </div>
@@ -572,6 +590,29 @@ onMounted(() => {
                                         </div>
                                     </div>
 
+                                    <!-- THÊM: HIỂN THỊ VOUCHER ĐÃ ÁP DỤNG VÀ CHI TIẾT GIẢM GIÁ -->
+                                    <div v-if="selectedOrder.voucherCode" class="mt-3 p-2 bg-success bg-opacity-10 border border-success rounded">
+                                        <h6 class="text-success small fw-bold mb-2"><i class="bi bi-ticket-perforated me-1"></i> MÃ GIẢM GIÁ ĐÃ ÁP DỤNG</h6>
+                                        <div class="d-flex justify-content-between align-items-center mb-2">
+                                            <span class="fw-bold text-dark font-monospace">{{ selectedOrder.voucherCode }}</span>
+                                            <span class="text-success">Đã giảm {{ formatPrice(discountAmount) }}</span>
+                                        </div>
+                                        <div class="small border-top pt-2 mt-1">
+                                            <div class="d-flex justify-content-between">
+                                                <span class="text-muted">Tổng tiền hàng:</span>
+                                                <span>{{ formatPrice(originalAmount) }}</span>
+                                            </div>
+                                            <div class="d-flex justify-content-between text-success">
+                                                <span>Giảm giá:</span>
+                                                <span>- {{ formatPrice(discountAmount) }}</span>
+                                            </div>
+                                            <div class="d-flex justify-content-between fw-bold">
+                                                <span>Thành tiền:</span>
+                                                <span class="text-danger">{{ formatPrice(selectedOrder.totalAmount) }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     <div v-if="returnRequestInfo" class="mt-3 p-2 bg-danger bg-opacity-10 border border-danger rounded">
                                         <h6 class="text-danger small fw-bold mb-2"><i class="bi bi-arrow-return-left me-1"></i> YÊU CẦU HOÀN TRẢ</h6>
                                         <div class="small text-dark" style="font-size: 0.9em;">
@@ -588,7 +629,7 @@ onMounted(() => {
                             <h6 class="text-uppercase text-secondary small fw-bold mb-3">SẢN PHẨM ĐÃ MUA</h6>
                             <div class="table-responsive">
                                 <table class="table table-borderless align-middle mb-0">
-                                    <thead><tr class="text-secondary small fw-bold border-bottom"><th class="ps-0 pb-2">Sản phẩm</th><th class="text-end pb-2">Đơn giá</th><th class="text-center pb-2">SL</th><th class="text-end pb-2">Thành tiền</th></tr></thead>
+                                    <thead><tr class="text-secondary small fw-bold border-bottom"><th class="ps-0 pb-2">Sản phẩm</th><th class="text-end pb-2">Đơn giá</th><th class="text-center pb-2">SL</th><th class="text-end pb-2">Thành tiền</th>  </tr></thead>
                                     <tbody>
                                         <tr v-for="detail in selectedOrder.orderDetails" :key="detail.id" class="border-bottom">
                                             <td class="ps-0 py-3">
@@ -602,17 +643,29 @@ onMounted(() => {
                                                         <small class="text-muted">Mã SP: #{{ detail.product?.id }}</small>
                                                     </div>
                                                 </div>
-                                            </td>
+                                             </td>
                                             <td class="text-end text-muted">{{ formatPrice(detail.price) }}</td>
                                             <td class="text-center fw-bold">x{{ detail.quantity }}</td>
                                             <td class="text-end fw-bold text-dark">{{ formatPrice(detail.price * detail.quantity) }}</td>
-                                        </tr>
+                                         </tr>
                                     </tbody>
                                 </table>
                             </div>
                         </div>
                     </div>
-                    <div class="modal-footer bg-white border-top p-3 d-flex justify-content-between align-items-center"><button type="button" class="btn btn-secondary px-4 rounded-pill fw-bold" data-bs-dismiss="modal">Đóng</button><div class="d-flex align-items-center"><span class="text-secondary text-uppercase small fw-bold me-3">TỔNG THANH TOÁN:</span><span class="text-danger fs-3 fw-bold">{{ formatPrice(selectedOrder.totalAmount) }}</span></div></div>
+                    <!-- THÊM: CẬP NHẬT PHẦN FOOTER HIỂN THỊ GIẢM GIÁ -->
+                    <div class="modal-footer bg-white border-top p-3 d-flex justify-content-between align-items-center">
+                        <button type="button" class="btn btn-secondary px-4 rounded-pill fw-bold" data-bs-dismiss="modal">Đóng</button>
+                        <div class="d-flex align-items-center">
+                            <div class="text-end me-4">
+                                <div v-if="selectedOrder.voucherCode" class="small text-success">
+                                    <i class="bi bi-ticket-perforated me-1"></i> Mã: {{ selectedOrder.voucherCode }}
+                                </div>
+                                <div class="text-secondary text-uppercase small fw-bold">TỔNG THANH TOÁN:</div>
+                            </div>
+                            <span class="text-danger fs-3 fw-bold">{{ formatPrice(selectedOrder.totalAmount) }}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
