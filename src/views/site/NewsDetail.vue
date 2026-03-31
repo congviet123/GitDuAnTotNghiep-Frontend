@@ -11,11 +11,12 @@ const authStore = useAuthStore();
 const articleId = Number(route.params.id);
 
 // --- ARTICLE ---
-const article   = ref(null);
-const isLoading = ref(true);
-const isLiked   = ref(false);
-const likeCount = ref(0);
-let   viewTimer = null;
+const article    = ref(null);
+const isLoading  = ref(true);
+const isLiked    = ref(false);
+const likeCount  = ref(0);
+const shareCount = ref(0);
+let   viewTimer  = null;
 
 // --- COMMENTS STATE ---
 const rootComments  = ref([]);           // list of root comment objects
@@ -61,9 +62,10 @@ const fetchArticleDetail = async () => {
   isLoading.value = true;
   try {
     const res = await apiClient.get(`/news/${articleId}`);
-    article.value   = res.data;
-    likeCount.value = res.data.likeCount || 0;
-    isLiked.value   = res.data.likedByCurrentUser;
+    article.value    = res.data;
+    likeCount.value  = res.data.likeCount  || 0;
+    shareCount.value = res.data.shareCount || 0;
+    isLiked.value    = res.data.likedByCurrentUser;
   } catch (err) {
     console.error('Lỗi tải bài viết', err);
   } finally {
@@ -105,6 +107,7 @@ const recordShare = async (platform, receiverEmail = null) => {
       newsUrl: window.location.href,
       receiverEmail: receiverEmail || null,
     });
+    shareCount.value++;
   } catch (err) {
     console.error('Lỗi ghi nhận chia sẻ', err);
   }
@@ -328,6 +331,7 @@ onUnmounted(() => {
           <span><i class="bi bi-person-fill me-1"></i>{{ article.authorName }}</span>
           <span><i class="bi bi-calendar3 me-1"></i>{{ formatDate(article.createDate) }}</span>
           <span><i class="bi bi-eye me-1"></i>{{ article.viewCount }} lượt xem</span>
+          <span><i class="bi bi-share me-1"></i>{{ shareCount }} lượt chia sẻ</span>
         </div>
 
         <div class="mb-4 text-center" v-if="article.image">
@@ -356,7 +360,7 @@ onUnmounted(() => {
             {{ isLiked ? 'Đã thích' : 'Yêu thích' }} ({{ likeCount }})
           </button>
           <button @click="showShareModal = true" class="btn btn-outline-primary rounded-pill px-4">
-            <i class="bi bi-share-fill"></i> Chia sẻ
+            <i class="bi bi-share-fill"></i> Chia sẻ ({{ shareCount }})
           </button>
         </div>
 

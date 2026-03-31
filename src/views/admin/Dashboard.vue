@@ -448,34 +448,6 @@ onMounted(async () => {
             </div>
         </div>
 
-        <div class="card shadow-sm border-0">
-            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
-                <h6 class="mb-0 fw-bold text-info"><i class="bi bi-newspaper me-2"></i>Tin tức & Bài báo</h6>
-                
-                <div class="d-flex gap-1">
-                    <select class="form-select form-select-sm shadow-none" v-model="newsYear" style="width: 80px;">
-                        <option v-for="y in availableYears" :value="y" :key="y">{{ y }}</option>
-                    </select>
-                    <select class="form-select form-select-sm shadow-none" v-model="newsMonth" style="width: 100px;">
-                        <option value="all">Cả năm</option>
-                        <option v-for="m in 12" :key="m" :value="m.toString()">T{{ m }}</option>
-                    </select>
-                </div>
-            </div>
-            <div class="card-body">
-                <div class="row">
-                    <div class="col-md-6 mb-4 mb-md-0 border-end">
-                        <h6 class="text-center small text-muted mb-3">Top Lượt Xem (Views)</h6>
-                        <div style="height: 250px;"><canvas id="newsViewChart"></canvas></div>
-                    </div>
-                    <div class="col-md-6">
-                        <h6 class="text-center small text-muted mb-3">Top Yêu Thích (Likes)</h6>
-                        <div style="height: 250px;"><canvas id="newsLikeChart"></canvas></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-
     </div>
 </template>
 
