@@ -3,6 +3,19 @@ import { ref, onMounted, reactive, watch, computed } from 'vue';
 import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
+import { useAuthStore } from '@/store/auth';
+
+// ========== KHỞI TẠO authStore ==========
+const authStore = useAuthStore();
+
+// ========== KIỂM TRA CÓ PHẢI STAFF KHÔNG ==========
+const isStaff = computed(() => {
+    const user = authStore.user;
+    if (!user || !user.role) return false;
+    const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+    return roleName === 'STAFF' || roleName === 'ROLE_STAFF';
+});
+// ===============================================
 
 // ============================================================================
 // 1. STATE & BIẾN TOÀN CỤC (QUẢN LÝ TRẠNG THÁI)
@@ -333,6 +346,16 @@ const saveProduct = async () => {
 
 // [XÓA SẢN PHẨM]
 const deleteProduct = async (item) => {
+    // Nếu là Staff thì không cho xóa
+    if (isStaff.value) {
+        Swal.fire({ 
+            icon: 'warning', 
+            title: 'Không có quyền!', 
+            text: 'Bạn không có quyền xóa sản phẩm. Vui lòng liên hệ Admin.' 
+        });
+        return;
+    }
+    
     // [LOGIC RÀNG BUỘC]: Không cho phép xóa trực tiếp nếu sản phẩm vẫn còn số lượng trong kho và không phải hàng thanh lý
     if (item.quantity > 0 && !item.isLiquidation) {
         Swal.fire({ 
@@ -503,7 +526,7 @@ onMounted(() => fetchData(true));
             </td>
             <td class="text-center">
               <button class="btn btn-outline-primary btn-sm me-2" @click="openModal(p.id)" title="Thiết lập giá & Thông tin"><i class="bi bi-pencil-square"></i></button>
-              <button class="btn btn-outline-danger btn-sm" @click="deleteProduct(p)"><i class="bi bi-trash"></i></button>
+              <button v-if="!isStaff" class="btn btn-outline-danger btn-sm" @click="deleteProduct(p)"><i class="bi bi-trash"></i></button>
             </td>
           </tr>
           

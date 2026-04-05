@@ -1,8 +1,21 @@
 <script setup>
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, onMounted, computed } from 'vue';
 import apiClient from '@/services/api';
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
+import { useAuthStore } from '@/store/auth';
+
+// ========== KHỞI TẠO authStore ==========
+const authStore = useAuthStore();
+
+// ========== KIỂM TRA CÓ PHẢI STAFF KHÔNG ==========
+const isStaff = computed(() => {
+    const user = authStore.user;
+    if (!user || !user.role) return false;
+    const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+    return roleName === 'STAFF' || roleName === 'ROLE_STAFF';
+});
+// ===============================================
 
 // --- STATE ---
 const newsList = ref([]);
@@ -43,7 +56,7 @@ const form = reactive({
     id: null,
     title: '',
     content: '',
-    imagePreview: '',  // blob URL or existing image for preview only
+    imagePreview: '',
     productLink: '',
 });
 
@@ -77,7 +90,6 @@ const fetchNews = async () => {
         const res = await apiClient.get('/news', { params });
         const data = res.data;
 
-        // Backend returns Page<NewsResponseDTO>
         if (data.content !== undefined) {
             newsList.value = data.content;
             pagination.totalPages = data.totalPages;
@@ -183,8 +195,18 @@ const saveNews = async () => {
     }
 };
 
-// --- DELETE ---
+// --- DELETE - Chỉ Admin mới được xóa ---
 const deleteNews = async (id) => {
+    // Nếu là Staff thì không cho xóa
+    if (isStaff.value) {
+        Swal.fire({ 
+            icon: 'warning', 
+            title: 'Không có quyền!', 
+            text: 'Bạn không có quyền xóa bài viết. Vui lòng liên hệ Admin.' 
+        });
+        return;
+    }
+    
     const result = await Swal.fire({
         title: 'Xóa bài viết?',
         text: 'Thao tác này không thể hoàn tác!',
@@ -200,7 +222,6 @@ const deleteNews = async (id) => {
             await apiClient.delete(`/news/${id}`);
             newsList.value = newsList.value.filter(n => n.id !== id);
             pagination.totalElements = Math.max(0, pagination.totalElements - 1);
-            // If current page is empty after deletion, go back one page
             if (newsList.value.length === 0 && pagination.page > 0) {
                 pagination.page--;
                 fetchNews();
@@ -290,7 +311,6 @@ onMounted(async () => {
         <div class="card border-0 shadow-sm mb-3 bg-white">
             <div class="card-body py-3">
                 <div class="row g-3 align-items-end">
-                    <!-- Search -->
                     <div class="col-md-4">
                         <label class="form-label small text-muted fw-bold mb-1">Tìm kiếm</label>
                         <div class="input-group">
@@ -304,7 +324,6 @@ onMounted(async () => {
                         </div>
                     </div>
 
-                    <!-- Sort By -->
                     <div class="col-md-2">
                         <label class="form-label small text-muted fw-bold mb-1">Sắp xếp theo</label>
                         <select class="form-select bg-light" v-model="filters.sortBy" @change="searchNews">
@@ -315,7 +334,6 @@ onMounted(async () => {
                         </select>
                     </div>
 
-                    <!-- Sort Direction -->
                     <div class="col-md-2">
                         <label class="form-label small text-muted fw-bold mb-1">Thứ tự</label>
                         <div class="btn-group w-100" role="group">
@@ -332,7 +350,6 @@ onMounted(async () => {
                         </div>
                     </div>
 
-                    <!-- Actions -->
                     <div class="col-md-2 d-flex gap-2">
                         <button class="btn btn-primary flex-fill" @click="searchNews">
                             <i class="bi bi-search me-1"></i> Tìm
@@ -360,7 +377,7 @@ onMounted(async () => {
         <div v-else class="table-responsive shadow-sm rounded border bg-white" style="max-height: 70vh; overflow-y: auto;">
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-dark sticky-top text-nowrap">
-                        <tr>
+                    <tr>
                         <th class="ps-3">#ID</th>
                         <th>Hình ảnh</th>
                         <th style="min-width: 280px;">Tiêu đề & Tác giả</th>
@@ -397,7 +414,8 @@ onMounted(async () => {
                         <button class="btn btn-outline-primary btn-sm me-2" @click="openNewsModal(item)" title="Sửa">
                             <i class="bi bi-pencil-square"></i>
                         </button>
-                        <button class="btn btn-outline-danger btn-sm" @click="deleteNews(item.id)" title="Xóa">
+                        <!-- Chỉ hiển thị nút xóa nếu không phải Staff -->
+                        <button v-if="!isStaff" class="btn btn-outline-danger btn-sm" @click="deleteNews(item.id)" title="Xóa">
                             <i class="bi bi-trash"></i>
                         </button>
                     </td>
@@ -528,25 +546,21 @@ onMounted(async () => {
                     </div>
 
                     <div class="modal-body bg-light p-3" style="max-height: 500px; overflow-y: auto;">
-                        <!-- Loading -->
                         <div v-if="commentLoading" class="text-center py-4">
                             <div class="spinner-border text-primary spinner-border-sm"></div>
                             <p class="mt-2 mb-0 text-muted small">Đang tải bình luận...</p>
                         </div>
 
-                        <!-- Empty -->
                         <div v-else-if="comments.length === 0" class="text-center py-5 text-muted">
                             <i class="bi bi-chat-square-text fs-1 d-block mb-2 opacity-50"></i>
                             Chưa có bình luận nào cho bài viết này.
                         </div>
 
-                        <!-- List -->
                         <ul v-else class="list-group list-group-flush">
                             <li v-for="cmt in comments" :key="cmt.id"
                                 class="list-group-item rounded mb-2 border shadow-sm"
                                 :class="{ 'opacity-50 bg-secondary-subtle': !cmt.visiable }">
                                 <div class="d-flex justify-content-between align-items-start">
-                                    <!-- Left: info -->
                                     <div class="flex-grow-1 me-3">
                                         <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
                                             <span class="fw-bold text-dark">{{ cmt.author }}</span>
@@ -577,7 +591,6 @@ onMounted(async () => {
                         </ul>
                     </div>
 
-                    <!-- Comment Pagination -->
                     <div v-if="commentPagination.totalPages > 1"
                          class="modal-footer d-flex justify-content-between align-items-center py-2 border-top bg-white">
                         <small class="text-muted">
@@ -607,7 +620,6 @@ onMounted(async () => {
                 </div>
             </div>
         </div>
-
     </div>
 </template>
 

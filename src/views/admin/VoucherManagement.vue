@@ -1,9 +1,22 @@
 <script setup>
-import { reactive, ref, onMounted } from 'vue';
+import { reactive, ref, onMounted, computed } from 'vue';
 import Swal from 'sweetalert2';
 import { voucherService } from '@/services/voucherService';
 import * as bootstrap from 'bootstrap';
-import apiClient from '@/services/api'; // THÊM DÒNG NÀY
+import apiClient from '@/services/api';
+import { useAuthStore } from '@/store/auth';
+
+// ========== KHỞI TẠO authStore ==========
+const authStore = useAuthStore();
+
+// ========== KIỂM TRA CÓ PHẢI STAFF KHÔNG ==========
+const isStaff = computed(() => {
+    const user = authStore.user;
+    if (!user || !user.role) return false;
+    const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+    return roleName === 'STAFF' || roleName === 'ROLE_STAFF';
+});
+// ===============================================
 
 // Dữ liệu form
 const voucherForm = reactive({
@@ -88,19 +101,16 @@ const loadVouchers = async () => {
 
 // Lưu voucher
 const saveVoucher = async () => {
-    // Kiểm tra bắt buộc
     if (!voucherForm.code || !voucherForm.value || !voucherForm.startDate || !voucherForm.expiryDate) {
         Swal.fire({ icon: 'warning', title: 'Thiếu thông tin', text: 'Vui lòng nhập đầy đủ!' });
         return;
     }
 
-    // Kiểm tra mã hợp lệ
     if (voucherForm.code.includes(' ') || !/^[A-Z0-9]+$/.test(voucherForm.code)) {
         Swal.fire({ icon: 'warning', title: 'Mã không hợp lệ', text: 'Mã chỉ chứa chữ in hoa và số, không dấu cách!' });
         return;
     }
 
-    // Kiểm tra ngày
     if (new Date(voucherForm.startDate) > new Date(voucherForm.expiryDate)) {
         Swal.fire({ icon: 'warning', title: 'Lỗi ngày', text: 'Ngày bắt đầu phải trước ngày kết thúc!' });
         return;
@@ -143,8 +153,17 @@ const saveVoucher = async () => {
     }
 };
 
-// Xóa voucher
+// Xóa voucher - Chỉ Admin mới được xóa
 const deleteVoucher = (code) => {
+    if (isStaff.value) {
+        Swal.fire({ 
+            icon: 'warning', 
+            title: 'Không có quyền!', 
+            text: 'Bạn không có quyền xóa voucher. Vui lòng liên hệ Admin.' 
+        });
+        return;
+    }
+    
     Swal.fire({
         title: 'Xóa voucher?',
         text: `Xóa voucher "${code}"?`,
@@ -273,7 +292,6 @@ const isValid = (start, end) => {
 
 onMounted(() => {
     loadVouchers();
-    // THÊM: Khởi tạo modal gửi email
     const modalEl = document.getElementById('sendEmailModal');
     if (modalEl) {
         sendEmailModal = new bootstrap.Modal(modalEl);
@@ -359,8 +377,7 @@ onMounted(() => {
                                     <td><span class="badge" :class="getStatusBadge(v.status)">{{ getStatusText(v.status) }}</span></td>
                                     <td>
                                         <button class="btn btn-sm btn-outline-primary me-1" @click="editVoucher(v)"><i class="bi bi-pencil"></i></button>
-                                        <button class="btn btn-sm btn-outline-danger me-1" @click="deleteVoucher(v.code)"><i class="bi bi-trash"></i></button>
-                                        <!-- THÊM NÚT GỬI MAIL -->
+                                        <button v-if="!isStaff" class="btn btn-sm btn-outline-danger me-1" @click="deleteVoucher(v.code)"><i class="bi bi-trash"></i></button>
                                         <button class="btn btn-sm btn-outline-success" @click="openSendEmailModal(v)" title="Gửi mail">
                                             <i class="bi bi-envelope-paper"></i>
                                         </button>

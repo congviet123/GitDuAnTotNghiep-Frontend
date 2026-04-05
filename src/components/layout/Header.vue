@@ -65,7 +65,9 @@ const isAdmin = computed(() => {
     if (!user || !user.role) return false;
     
     const roleName = user.role.name || user.role;
-    return roleName === 'ROLE_ADMIN' || roleName === 'ADMIN' || roleName === 'ROLE_STAFF';
+    // Cho phép ADMIN, STAFF và SHIPPER đều thấy menu "Quản trị Admin"
+    const validRoles = ['ROLE_ADMIN', 'ADMIN', 'ROLE_STAFF', 'STAFF', 'ROLE_SHIPPER', 'SHIPPER'];
+    return validRoles.includes(roleName);
 });
 
 onMounted(() => { 
@@ -158,8 +160,8 @@ onUnmounted(() => {
                                     <li><router-link class="dropdown-item" to="/profile" @click="isUserDropdownOpen = false"><i class="bi bi-person-badge me-2"></i>Hồ sơ cá nhân</router-link></li>
                                     <li><router-link class="dropdown-item" to="/order-history" @click="isUserDropdownOpen = false"><i class="bi bi-bag-check me-2"></i>Đơn mua</router-link></li>
                                     <!-- THÊM MỤC VOUCHER -->
-<li><router-link class="dropdown-item" to="/my-vouchers" @click="isUserDropdownOpen = false"><i class="bi bi-ticket-perforated me-2"></i>Voucher</router-link></li>
-<!-- ========== KẾT THÚC ========== -->
+                                    <li><router-link class="dropdown-item" to="/my-vouchers" @click="isUserDropdownOpen = false"><i class="bi bi-ticket-perforated me-2"></i>Voucher</router-link></li>
+                                    <!-- ========== KẾT THÚC ========== -->
                                     <li><router-link class="dropdown-item" to="/liked-news" @click="isUserDropdownOpen = false"><i class="bi bi-heart me-2"></i>Tin tức đã thích</router-link></li>
                                     <li><router-link class="dropdown-item" to="/auth/change-password" @click="isUserDropdownOpen = false"><i class="bi bi-key me-2"></i>Đổi mật khẩu</router-link></li>
                                     <li><hr class="dropdown-divider"></li>

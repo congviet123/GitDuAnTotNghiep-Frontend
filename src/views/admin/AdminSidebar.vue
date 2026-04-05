@@ -1,12 +1,37 @@
-
 <script setup>
-    // Đây là file con được gọi từ AdminLayout.vue
 import { useAuthStore } from '@/store/auth';
 import { useRouter } from 'vue-router';
 import Swal from 'sweetalert2';
+import { computed } from 'vue';
 
 const authStore = useAuthStore();
 const router = useRouter();
+
+// ========== THÊM: Kiểm tra role ==========
+const userRole = computed(() => {
+    const user = authStore.user;
+    if (!user || !user.role) return null;
+    return typeof user.role === 'object' ? user.role.name : user.role;
+});
+
+// Kiểm tra có phải Shipper không
+const isShipper = computed(() => userRole.value === 'ROLE_SHIPPER' || userRole.value === 'SHIPPER');
+
+// Kiểm tra có phải Staff không
+const isStaff = computed(() => userRole.value === 'ROLE_STAFF' || userRole.value === 'STAFF');
+
+// Kiểm tra có phải Admin hoặc Staff không
+const isAdminOrStaff = computed(() => {
+    const role = userRole.value;
+    return role === 'ROLE_ADMIN' || role === 'ADMIN' || role === 'ROLE_STAFF' || role === 'STAFF';
+});
+
+// THÊM: Kiểm tra có phải Admin không (Staff không thấy menu đặc biệt)
+const isAdminOnly = computed(() => {
+    const role = userRole.value;
+    return role === 'ROLE_ADMIN' || role === 'ADMIN';
+});
+// ========== KẾT THÚC THÊM ==========
 
 const handleLogout = () => {
     Swal.fire({
@@ -33,63 +58,89 @@ const handleLogout = () => {
         </a>
         <hr>
         <ul class="nav nav-pills flex-column mb-auto">
-            <li class="nav-item">
+            <!-- Dashboard - Chỉ Admin/Staff mới thấy -->
+            <li v-if="isAdminOrStaff" class="nav-item">
                 <router-link to="/admin/dashboard" class="nav-link text-white" active-class="active">
                     <i class="bi bi-house-door me-2"></i> Dashboard
                 </router-link>
             </li>
-            <li>
+            
+            <!-- Quản lý Sản phẩm - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
                 <router-link to="/admin/products" class="nav-link text-white" active-class="active">
                     <i class="bi bi-box-seam me-2"></i> Quản lý Sản phẩm
                 </router-link>
             </li>
             
-            <li>
+            <!-- Quản lý Loại hàng - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
                 <router-link to="/admin/categories" class="nav-link text-white" active-class="active">
                     <i class="bi bi-tags-fill me-2"></i> Quản lý Loại hàng
                 </router-link>
             </li>
 
+            <!-- Quản lý Đơn hàng - Tất cả (Admin, Staff, Shipper) đều thấy -->
             <li>
                 <router-link to="/admin/orders" class="nav-link text-white" active-class="active">
                     <i class="bi bi-cart-check me-2"></i> Quản lý Đơn hàng
                 </router-link>
             </li>
-            <li>
+            
+            <!-- ========== THÊM: Quản lý Người dùng - Chỉ Admin (Staff không thấy) ========== -->
+            <li v-if="isAdminOnly">
                 <router-link to="/admin/users" class="nav-link text-white" active-class="active">
                     <i class="bi bi-people me-2"></i> Quản lý Người dùng
                 </router-link>
             </li>
-            <li><router-link to="/admin/news" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-newspaper me-3 fs-5"></i> <span class="fw-semibold">Quản lý Tin tức</span>
-</router-link></li>
+            
+            <!-- Quản lý Tin tức - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
+                <router-link to="/admin/news" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-newspaper me-3 fs-5"></i> <span class="fw-semibold">Quản lý Tin tức</span>
+                </router-link>
+            </li>
 
-            <li><router-link to="/admin/about-cms" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-info-square me-3 fs-5"></i>
-    <span class="fw-semibold">Quản lý Giới thiệu</span>
-</router-link></li>
+            <!-- Quản lý Giới thiệu - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
+                <router-link to="/admin/about-cms" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-info-square me-3 fs-5"></i>
+                    <span class="fw-semibold">Quản lý Giới thiệu</span>
+                </router-link>
+            </li>
 
-<li><router-link to="/admin/contact-cms" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-geo-alt me-3 fs-5"></i>
-    <span class="fw-semibold">Quản lý Liên hệ</span>
-</router-link></li>
+            <!-- Quản lý Liên hệ - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
+                <router-link to="/admin/contact-cms" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-geo-alt me-3 fs-5"></i>
+                    <span class="fw-semibold">Quản lý Liên hệ</span>
+                </router-link>
+            </li>
 
-<!-- THÊM MỤC QUẢN LÝ VOUCHER Ở ĐÂY -->
-<li><router-link to="/admin/vouchers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-ticket-perforated me-3 fs-5"></i>
-    <span class="fw-semibold">Quản lý Voucher</span>
-</router-link></li>
-<div class="sidebar-heading text-uppercase px-4 mt-4 mb-2 text-white-50 small fw-bold">Kho & Đối tác</div>
-<li><router-link to="/admin/suppliers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-building me-3 fs-5"></i>
-    <span class="fw-semibold">Nhà cung cấp</span>
-</router-link>
-</li>
+            <!-- Quản lý Voucher - Chỉ Admin/Staff -->
+            <li v-if="isAdminOrStaff">
+                <router-link to="/admin/vouchers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-ticket-perforated me-3 fs-5"></i>
+                    <span class="fw-semibold">Quản lý Voucher</span>
+                </router-link>
+            </li>
 
-<li><router-link to="/admin/imports" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
-    <i class="bi bi-box-arrow-in-down me-3 fs-5"></i>
-    <span class="fw-semibold">Nhập hàng</span>
-</router-link></li>
+            <!-- ========== THÊM: Kho & Đối tác - Chỉ Admin (Staff không thấy) ========== -->
+            <div v-if="isAdminOnly" class="sidebar-heading text-uppercase px-4 mt-4 mb-2 text-white-50 small fw-bold">Kho & Đối tác</div>
+            
+            <li v-if="isAdminOnly">
+                <router-link to="/admin/suppliers" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-building me-3 fs-5"></i>
+                    <span class="fw-semibold">Nhà cung cấp</span>
+                </router-link>
+            </li>
+
+            <li v-if="isAdminOnly">
+                <router-link to="/admin/imports" class="nav-link text-white d-flex align-items-center py-3 px-4 hover-effect" active-class="active-link">
+                    <i class="bi bi-box-arrow-in-down me-3 fs-5"></i>
+                    <span class="fw-semibold">Nhập hàng</span>
+                </router-link>
+            </li>
+            <!-- ========== KẾT THÚC THÊM ========== -->
 
         </ul>
         <hr>
@@ -110,13 +161,13 @@ const handleLogout = () => {
 <style scoped>
 .sidebar-container {
     width: 280px;
-    height: 100vh; /* Full chiều cao màn hình */
-    position: sticky; /* Cố định khi cuộn */
+    height: 100vh;
+    position: sticky;
     top: 0;
 }
 
 .nav-link.active {
-    background-color: #ff6b01 !important; /* Màu cam chủ đạo */
+    background-color: #ff6b01 !important;
     color: white !important;
 }
 

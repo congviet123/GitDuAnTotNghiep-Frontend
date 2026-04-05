@@ -1,7 +1,20 @@
 <script setup>
-import { ref, onMounted, reactive } from 'vue';
+import { ref, onMounted, reactive, computed } from 'vue';
 import apiClient from '@/services/api';
 import Swal from 'sweetalert2';
+import { useAuthStore } from '@/store/auth';
+
+// ========== KHỞI TẠO authStore ==========
+const authStore = useAuthStore();
+
+// ========== KIỂM TRA CÓ PHẢI STAFF KHÔNG ==========
+const isStaff = computed(() => {
+    const user = authStore.user;
+    if (!user || !user.role) return false;
+    const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+    return roleName === 'STAFF' || roleName === 'ROLE_STAFF';
+});
+// ===============================================
 
 // Dữ liệu
 const categories = ref([]);
@@ -54,24 +67,32 @@ const saveData = async () => {
 
     try {
         if (isEditing.value) {
-            // Update
             await apiClient.put(`/admin/categories/${form.id}`, form);
             Swal.fire('Thành công', 'Cập nhật danh mục thành công', 'success');
         } else {
-            // Create
             await apiClient.post('/admin/categories', form);
             Swal.fire('Thành công', 'Thêm danh mục thành công', 'success');
         }
         showModal.value = false;
-        fetchCategories(); // Load lại bảng
+        fetchCategories();
     } catch (err) {
         const msg = err.response?.data || 'Có lỗi xảy ra';
         Swal.fire('Lỗi', msg, 'error');
     }
 };
 
-// 5. Xóa danh mục
+// 5. Xóa danh mục - Chỉ Admin mới được xóa
 const deleteCategory = async (id) => {
+    // Nếu là Staff thì không cho xóa
+    if (isStaff.value) {
+        Swal.fire({ 
+            icon: 'warning', 
+            title: 'Không có quyền!', 
+            text: 'Bạn không có quyền xóa danh mục. Vui lòng liên hệ Admin.' 
+        });
+        return;
+    }
+    
     const result = await Swal.fire({
         title: 'Bạn chắc chắn?',
         text: "Không thể khôi phục sau khi xóa!",
@@ -131,7 +152,8 @@ onMounted(() => {
                                 <button class="btn btn-sm btn-outline-primary me-2" @click="openEditModal(cat)">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" @click="deleteCategory(cat.id)">
+                                <!-- Chỉ hiển thị nút xóa nếu không phải Staff -->
+                                <button v-if="!isStaff" class="btn btn-sm btn-outline-danger" @click="deleteCategory(cat.id)">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </td>

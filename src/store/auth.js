@@ -4,7 +4,7 @@ export const useAuthStore = defineStore('auth', {
   state: () => {
     // 1. Lấy Token từ LocalStorage
     const token = localStorage.getItem('token');
-    
+
     // 2. Lấy User và parse an toàn (tránh lỗi crash app nếu JSON bị lỗi)
     let user = null;
     try {
@@ -20,7 +20,7 @@ export const useAuthStore = defineStore('auth', {
     return {
       user: user,
       token: token,
-      
+
 
       // Kiểm tra ngay lúc khởi tạo: Nếu có Token HOẶC có User (trường hợp Google Login) thì coi như đã đăng nhập.
       isAuthenticated: !!token || !!user
@@ -32,16 +32,16 @@ export const useAuthStore = defineStore('auth', {
     login(userData, token = null) {
       // 1. Lưu thông tin User (Nếu có)
       if (userData) {
-          this.user = userData;
-          localStorage.setItem('user', JSON.stringify(userData));
+        this.user = userData;
+        localStorage.setItem('user', JSON.stringify(userData));
       }
-      
+
       // 2. Xử lý Token (Nếu có)
       if (token) {
         this.token = token;
         localStorage.setItem('token', token);
       }
-      
+
       // 3. Cập nhật trạng thái đăng nhập
       // Chỉ set true nếu thực sự có dữ liệu user hoặc token trong state
       this.isAuthenticated = !!this.user || !!this.token;
@@ -49,11 +49,11 @@ export const useAuthStore = defineStore('auth', {
 
     // Hàm cập nhật thông tin user (Dùng khi sửa profile mà không cần login lại)
     updateUser(newInfo) {
-        if (this.user) {
-            // Gộp thông tin cũ và mới
-            this.user = { ...this.user, ...newInfo };
-            localStorage.setItem('user', JSON.stringify(this.user));
-        }
+      if (this.user) {
+        // Gộp thông tin cũ và mới
+        this.user = { ...this.user, ...newInfo };
+        localStorage.setItem('user', JSON.stringify(this.user));
+      }
     },
 
     // Hàm logout
@@ -61,34 +61,56 @@ export const useAuthStore = defineStore('auth', {
       this.user = null;
       this.token = null;
       this.isAuthenticated = false;
-      
+
       // Xóa sạch localStorage
       localStorage.removeItem('user');
       localStorage.removeItem('token');
       localStorage.removeItem('cart'); // [BỔ SUNG] Xóa luôn giỏ hàng tạm nếu có
-      
+
     }
   },
-  
+
   // Getters giúp kiểm tra quyền hạn nhanh chóng
   getters: {
+    // ========== THÊM: Kiểm tra Admin (có toàn quyền) ==========
     isAdmin: (state) => {
-        const user = state.user;
-        
-        // Nếu chưa đăng nhập hoặc user không có role -> False
-        if (!user || !user.role) return false;
+      const user = state.user;
 
-  
-        // Backend Spring Boot trả về Entity User có quan hệ @ManyToOne với Role, 
-        // nên user.role thường là một Object: { id: 1, name: 'ROLE_ADMIN' }
-        // Tuy nhiên, ta vẫn check typeof để an toàn tuyệt đối.
-        const roleName = typeof user.role === 'object' ? user.role.name : user.role;
-        
-        // Danh sách các Role được phép truy cập trang Quản trị (Admin Dashboard)
-        // Khớp với Database: ROLE_ADMIN, ROLE_STAFF (Shipper thường dùng App riêng hoặc hạn chế)
-        const adminRoles = ['ADMIN', 'ROLE_ADMIN', 'ROLE_STAFF'];
-        
-        return adminRoles.includes(roleName);
+      // Nếu chưa đăng nhập hoặc user không có role -> False
+      if (!user || !user.role) return false;
+
+      // Backend Spring Boot trả về Entity User có quan hệ @ManyToOne với Role, 
+      // nên user.role thường là một Object: { id: 1, name: 'ROLE_ADMIN' }
+      // Tuy nhiên, ta vẫn check typeof để an toàn tuyệt đối.
+      const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+
+      // Danh sách các Role được phép truy cập trang Quản trị (Admin Dashboard)
+      // Khớp với Database: ROLE_ADMIN, ROLE_STAFF (Shipper thường dùng App riêng hoặc hạn chế)
+      const adminRoles = ['ADMIN', 'ROLE_ADMIN', 'ROLE_STAFF', 'STAFF'];
+
+      return adminRoles.includes(roleName);
+    },
+    // ========== THÊM: Kiểm tra Staff riêng (chỉ Staff, không phải Admin) ==========
+    isStaff: (state) => {
+      const user = state.user;
+      if (!user || !user.role) return false;
+      const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+      // Staff có role là STAFF hoặc ROLE_STAFF
+      return roleName === 'STAFF' || roleName === 'ROLE_STAFF';
+    },
+    // ========== THÊM: Kiểm tra Shipper riêng ==========
+    isShipper: (state) => {
+      const user = state.user;
+      if (!user || !user.role) return false;
+      const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+      return roleName === 'SHIPPER' || roleName === 'ROLE_SHIPPER';
+    },
+    // ========== THÊM: Kiểm tra Admin thuần túy (không bao gồm Staff) ==========
+    isPureAdmin: (state) => {
+      const user = state.user;
+      if (!user || !user.role) return false;
+      const roleName = typeof user.role === 'object' ? user.role.name : user.role;
+      return roleName === 'ADMIN' || roleName === 'ROLE_ADMIN';
     }
   }
 });

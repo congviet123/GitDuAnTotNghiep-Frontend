@@ -164,15 +164,24 @@ router.beforeEach((to, from, next) => {
   }
 
   // 3. Kiểm tra quyền Admin (requiresAdmin)
+  // ========== THÊM: Cho phép SHIPPER vào admin (chỉ xem đơn hàng) ==========
   if (to.meta.requiresAdmin) {
     const userRole = authStore.user?.role?.name;
-    const validRoles = ['ROLE_ADMIN', 'ADMIN', 'ROLE_STAFF'];
+    // Cho phép ADMIN, STAFF và SHIPPER vào trang admin
+    // SHIPPER sẽ chỉ thấy menu đơn hàng (đã xử lý trong sidebar)
+    const validRoles = ['ROLE_ADMIN', 'ADMIN', 'ROLE_STAFF', 'STAFF', 'ROLE_SHIPPER', 'SHIPPER'];
 
     if (!validRoles.includes(userRole)) {
       alert("Bạn không có quyền truy cập vùng quản trị!");
       return next('/');
     }
+    // ========== THÊM: Nếu là Shipper và đang vào dashboard thì chuyển sang orders ==========
+    if ((userRole === 'ROLE_SHIPPER' || userRole === 'SHIPPER') && to.path === '/admin/dashboard') {
+      return next('/admin/orders');
+    }
+    // ========== KẾT THÚC THÊM ==========
   }
+  // ========== KẾT THÚC THÊM ==========
 
   // Cho phép đi tiếp
   next();
