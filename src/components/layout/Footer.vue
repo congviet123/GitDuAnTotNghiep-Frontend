@@ -32,7 +32,7 @@ const scrollToTop = () => {
                     </ul>
                 </div>
 
-                <div class="col-lg-2 col-md-6 mb-4">
+                <div class="col-lg-3 col-md-6 mb-4">
                     <h6 class="fw-bold mb-3 text-dark">Về chúng tôi</h6>
                     <ul class="list-unstyled">
                         <li class="mb-2"><router-link to="/" class="text-decoration-none text-secondary hover-link">Trang chủ</router-link></li>
@@ -42,7 +42,7 @@ const scrollToTop = () => {
                     </ul>
                 </div>
 
-                <div class="col-lg-2 col-md-6 mb-4">
+                <div class="col-lg-3 col-md-6 mb-4">
                     <h6 class="fw-bold mb-3 text-dark">Chính sách</h6>
                     <ul class="list-unstyled">
                         <li class="mb-2"><a href="#" class="text-decoration-none text-secondary hover-link">Chính sách vận chuyển</a></li>
@@ -52,18 +52,9 @@ const scrollToTop = () => {
                     </ul>
                 </div>
 
-                <div class="col-lg-4 col-md-6 mb-4">
-                    <h6 class="fw-bold mb-3 text-dark">Đăng ký nhận tin</h6>
-                    <p class="text-muted small">Nhập email để nhận mã giảm giá và thông tin trái cây mới về.</p>
-                    <div class="input-group mb-4">
-                        <input type="email" class="form-control border-primary-blue" placeholder="Email của bạn...">
-                        <button class="btn btn-primary-blue text-white" type="button">
-                            <i class="bi bi-send-fill"></i> Gửi
-                        </button>
-                    </div>
-
+                <div class="col-lg-2 col-md-6 mb-4">
                     <h6 class="fw-bold mb-3 text-dark">Kết nối với chúng tôi</h6>
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 flex-wrap">
                         <a href="#" class="social-icon bg-primary"><i class="bi bi-facebook"></i></a>
                         <a href="#" class="social-icon bg-info text-white"><i class="bi bi-twitter"></i></a>
                         <a href="#" class="social-icon bg-danger"><i class="bi bi-instagram"></i></a>

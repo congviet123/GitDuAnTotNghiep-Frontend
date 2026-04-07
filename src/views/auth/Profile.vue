@@ -40,13 +40,80 @@ const addressForm = ref({
     isDefault: false
 });
 
+
+// STATE & LOGIC CHO API HÀNH CHÍNH VIỆT NAM (TỈNH/QUẬN/PHƯỜNG)
+const provinces = ref([]);
+const districts = ref([]);
+const wards = ref([]);
+
+// Lưu trữ mã code để gọi API cấp thấp hơn
+const selectedProvinceCode = ref('');
+const selectedDistrictCode = ref('');
+const selectedWardCode = ref('');
+
+// 1. Tải danh sách 63 Tỉnh/Thành
+const fetchProvincesAPI = async () => {
+    try {
+        const res = await fetch('https://provinces.open-api.vn/api/p/');
+        provinces.value = await res.json();
+    } catch (error) {
+        console.error('Lỗi API Tỉnh Thành:', error);
+    }
+};
+
+// 2. Sự kiện khi Khách hàng chọn Tỉnh/Thành
+const onProvinceChange = async () => {
+    districts.value = [];
+    wards.value = [];
+    selectedDistrictCode.value = '';
+    selectedWardCode.value = '';
+    addressForm.value.district = '';
+    addressForm.value.ward = '';
+
+    const selectedProv = provinces.value.find(p => p.code === selectedProvinceCode.value);
+    if (selectedProv) {
+        addressForm.value.province = selectedProv.name; // Lưu Tên để gửi xuống Backend
+        try {
+            const res = await fetch(`https://provinces.open-api.vn/api/p/${selectedProvinceCode.value}?depth=2`);
+            const data = await res.json();
+            districts.value = data.districts;
+        } catch (e) { console.error(e); }
+    }
+};
+
+// 3. Sự kiện khi Khách hàng chọn Quận/Huyện
+const onDistrictChange = async () => {
+    wards.value = [];
+    selectedWardCode.value = '';
+    addressForm.value.ward = '';
+
+    const selectedDist = districts.value.find(d => d.code === selectedDistrictCode.value);
+    if (selectedDist) {
+        addressForm.value.district = selectedDist.name; // Lưu Tên để gửi xuống Backend
+        try {
+            const res = await fetch(`https://provinces.open-api.vn/api/d/${selectedDistrictCode.value}?depth=2`);
+            const data = await res.json();
+            wards.value = data.wards;
+        } catch (e) { console.error(e); }
+    }
+};
+
+// 4. Sự kiện khi Khách hàng chọn Phường/Xã
+const onWardChange = () => {
+    const selectedW = wards.value.find(w => w.code === selectedWardCode.value);
+    if (selectedW) {
+        addressForm.value.ward = selectedW.name; // Lưu Tên để gửi xuống Backend
+    }
+};
+// ============================================================================
+
+
 // --- METHODS: PROFILE ---
 const fetchProfile = async () => {
     try {
-        // Gọi API: /rest/account/profile
         const response = await apiClient.get('/account/profile');
         Object.assign(form, response.data);
-        form.newPassword = ''; // Xóa trắng mật khẩu mỗi lần load lại form
+        form.newPassword = ''; 
     } catch (error) {
         console.error('Lỗi tải hồ sơ:', error);
     }
@@ -55,45 +122,30 @@ const fetchProfile = async () => {
 const saveProfile = async () => {
     loading.value = true;
     try {
-        // 1. Cập nhật thông tin hồ sơ cơ bản
         await apiClient.put('/account/profile', {
             fullname: form.fullname,
             phone: form.phone,
-            email: form.email // Phải gửi email đi dù bị disabled để Backend nhận diện
+            email: form.email 
         });
         
-        // 2.  Nếu người dùng có nhập mật khẩu mới -> Gọi API thiết lập mật khẩu
         if (form.newPassword && form.newPassword.trim().length > 0) {
             await apiClient.post('/account/setup-password', {
                 newPassword: form.newPassword
             });
         }
         
-        // Cập nhật ngay tên hiển thị trên Header (không cần F5)
         const updatedUser = { ...authStore.user, ...form };
         authStore.login(updatedUser, authStore.token);
-
-        // Xóa trắng ô mật khẩu sau khi lưu thành công
         form.newPassword = '';
 
         await Swal.fire({
-            icon: 'success',
-            title: 'Thành công',
-            text: 'Cập nhật thông tin thành công!',
-            timer: 1500,
-            showConfirmButton: false
+            icon: 'success', title: 'Thành công',
+            text: 'Cập nhật thông tin thành công!', timer: 1500, showConfirmButton: false
         });
     } catch (error) {
-        console.error('Lỗi cập nhật:', error);
-        
-        // Bắt lỗi an toàn cho SweetAlert
         let errorMessage = 'Có lỗi xảy ra khi lưu hồ sơ.';
         if (error.response && error.response.data) {
-            if (typeof error.response.data === 'string') {
-                errorMessage = error.response.data;
-            } else if (error.response.data.message) {
-                errorMessage = error.response.data.message;
-            }
+            errorMessage = typeof error.response.data === 'string' ? error.response.data : error.response.data.message;
         }
         Swal.fire('Thất bại', errorMessage, 'error');
     } finally {
@@ -101,7 +153,6 @@ const saveProfile = async () => {
     }
 };
 
-//  Hàm Toggle ẩn/hiện mật khẩu
 const togglePasswordVisibility = () => {
     showPassword.value = !showPassword.value;
 };
@@ -109,30 +160,61 @@ const togglePasswordVisibility = () => {
 // --- METHODS: ADDRESS ---
 const fetchAddresses = async () => {
     try {
-        // Gọi API: /rest/addresses
         const res = await apiClient.get('/addresses');
         addresses.value = res.data;
-    } catch (error) {
-        console.error("Lỗi tải địa chỉ:", error);
-    }
+    } catch (error) { console.error("Lỗi tải địa chỉ:", error); }
 };
 
-const openAddressModal = (addr = null) => {
+// Mở Modal và xử lý thông minh Map dữ liệu từ DB (Tên) sang API (Code)
+const openAddressModal = async (addr = null) => {
     showAddressModal.value = true;
+    
+    // Đảm bảo API tỉnh thành đã được tải
+    if (provinces.value.length === 0) {
+        await fetchProvincesAPI();
+    }
+
     if (addr) {
-        // Chế độ Sửa
         isEditAddress.value = true;
         addressForm.value = { ...addr };
+
+        // Auto-map Tỉnh/Thành
+        const prov = provinces.value.find(p => p.name === addr.province);
+        if (prov) {
+            selectedProvinceCode.value = prov.code;
+            // Tải danh sách Quận/Huyện của Tỉnh này
+            const resDist = await fetch(`https://provinces.open-api.vn/api/p/${prov.code}?depth=2`);
+            const dataDist = await resDist.json();
+            districts.value = dataDist.districts;
+
+            // Auto-map Quận/Huyện
+            const dist = districts.value.find(d => d.name === addr.district);
+            if (dist) {
+                selectedDistrictCode.value = dist.code;
+                // Tải danh sách Phường/Xã của Quận này
+                const resWard = await fetch(`https://provinces.open-api.vn/api/d/${dist.code}?depth=2`);
+                const dataWard = await resWard.json();
+                wards.value = dataWard.wards;
+
+                // Auto-map Phường/Xã
+                const ward = wards.value.find(w => w.name === addr.ward);
+                if (ward) {
+                    selectedWardCode.value = ward.code;
+                }
+            }
+        }
     } else {
-        // Chế độ Thêm mới
         isEditAddress.value = false;
         addressForm.value = { 
-            id: null, 
-            fullname: form.fullname, 
-            phone: form.phone, 
-            province: '', district: '', ward: '', addressLine: '', 
-            isDefault: false 
+            id: null, fullname: form.fullname, phone: form.phone, 
+            province: '', district: '', ward: '', addressLine: '', isDefault: false 
         };
+        // Reset API Data
+        selectedProvinceCode.value = '';
+        selectedDistrictCode.value = '';
+        selectedWardCode.value = '';
+        districts.value = [];
+        wards.value = [];
     }
 };
 
@@ -144,14 +226,11 @@ const saveAddress = async () => {
             await apiClient.post('/addresses', addressForm.value);
         }
         showAddressModal.value = false;
-        fetchAddresses(); // Tải lại danh sách
+        fetchAddresses(); 
         
         Swal.fire({
-            icon: 'success',
-            title: 'Thành công',
-            text: 'Đã lưu địa chỉ!',
-            timer: 1500,
-            showConfirmButton: false
+            icon: 'success', title: 'Thành công',
+            text: 'Đã lưu địa chỉ!', timer: 1500, showConfirmButton: false
         });
     } catch (error) {
         Swal.fire('Lỗi', 'Không thể lưu địa chỉ. Vui lòng thử lại.', 'error');
@@ -160,14 +239,9 @@ const saveAddress = async () => {
 
 const deleteAddress = async (id) => {
     const result = await Swal.fire({
-        title: 'Bạn chắc chắn?',
-        text: "Bạn muốn xóa địa chỉ này?",
-        icon: 'warning',
-        showCancelButton: true,
-        confirmButtonColor: '#d33',
-        cancelButtonColor: '#3085d6',
-        confirmButtonText: 'Xóa',
-        cancelButtonText: 'Hủy'
+        title: 'Bạn chắc chắn?', text: "Bạn muốn xóa địa chỉ này?", icon: 'warning',
+        showCancelButton: true, confirmButtonColor: '#d33', cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Xóa', cancelButtonText: 'Hủy'
     });
 
     if (result.isConfirmed) {
@@ -182,14 +256,11 @@ const deleteAddress = async (id) => {
 };
 
 onMounted(async () => {
-    // Nếu chưa đăng nhập thì đá về Login
     if (!authStore.isAuthenticated) {
         router.push('/login');
         return;
     }
-
     try {
-        // Chạy song song 2 API để tải nhanh hơn
         await Promise.all([fetchProfile(), fetchAddresses()]);
     } catch (e) {
         console.error("Lỗi khởi tạo:", e);
@@ -361,32 +432,42 @@ onMounted(async () => {
                         <form @submit.prevent="saveAddress">
                             <div class="row g-3 mb-3">
                                 <div class="col-6">
-                                    <label class="form-label small fw-bold">Họ và tên</label>
+                                    <label class="form-label small fw-bold">Họ và tên <span class="text-danger">*</span></label>
                                     <input v-model="addressForm.fullname" class="form-control" required placeholder="Người nhận" />
                                 </div>
                                 <div class="col-6">
-                                    <label class="form-label small fw-bold">Số điện thoại</label>
+                                    <label class="form-label small fw-bold">Số điện thoại <span class="text-danger">*</span></label>
                                     <input v-model="addressForm.phone" class="form-control" required placeholder="09xxx..." />
                                 </div>
                             </div>
                             
                             <div class="mb-3">
-                                <label class="form-label small fw-bold">Tỉnh / Thành phố</label>
-                                <input v-model="addressForm.province" class="form-control" required placeholder="Nhập Tỉnh/Thành..." />
+                                <label class="form-label small fw-bold">Tỉnh / Thành phố <span class="text-danger">*</span></label>
+                                <select class="form-select" v-model="selectedProvinceCode" @change="onProvinceChange" required>
+                                    <option value="" disabled>-- Chọn Tỉnh/Thành phố --</option>
+                                    <option v-for="p in provinces" :key="p.code" :value="p.code">{{ p.name }}</option>
+                                </select>
                             </div>
+
                             <div class="row g-3 mb-3">
                                 <div class="col-6">
-                                    <label class="form-label small fw-bold">Quận / Huyện</label>
-                                    <input v-model="addressForm.district" class="form-control" required placeholder="Nhập Quận/Huyện..." />
+                                    <label class="form-label small fw-bold">Quận / Huyện <span class="text-danger">*</span></label>
+                                    <select class="form-select" v-model="selectedDistrictCode" @change="onDistrictChange" :disabled="!selectedProvinceCode" required>
+                                        <option value="" disabled>-- Chọn Quận/Huyện --</option>
+                                        <option v-for="d in districts" :key="d.code" :value="d.code">{{ d.name }}</option>
+                                    </select>
                                 </div>
                                 <div class="col-6">
-                                    <label class="form-label small fw-bold">Phường / Xã</label>
-                                    <input v-model="addressForm.ward" class="form-control" required placeholder="Nhập Phường/Xã..." />
+                                    <label class="form-label small fw-bold">Phường / Xã <span class="text-danger">*</span></label>
+                                    <select class="form-select" v-model="selectedWardCode" @change="onWardChange" :disabled="!selectedDistrictCode" required>
+                                        <option value="" disabled>-- Chọn Phường/Xã --</option>
+                                        <option v-for="w in wards" :key="w.code" :value="w.code">{{ w.name }}</option>
+                                    </select>
                                 </div>
                             </div>
                             
                             <div class="mb-3">
-                                <label class="form-label small fw-bold">Địa chỉ cụ thể</label>
+                                <label class="form-label small fw-bold">Địa chỉ cụ thể <span class="text-danger">*</span></label>
                                 <textarea v-model="addressForm.addressLine" class="form-control" rows="2" placeholder="Số nhà, tên đường, tòa nhà..." required></textarea>
                             </div>
 

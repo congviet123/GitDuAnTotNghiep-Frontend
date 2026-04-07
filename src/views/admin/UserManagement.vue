@@ -1,21 +1,33 @@
 <script setup>
-import { ref, onMounted, reactive } from 'vue';
+import { ref, onMounted, reactive, computed } from 'vue';
 import apiClient from '@/services/api'; 
 import * as bootstrap from 'bootstrap';
 import Swal from 'sweetalert2';
+import { useAuthStore } from '@/store/auth'; 
 
 // --- STATE ---
+const authStore = useAuthStore(); //  Khởi tạo store để lấy tài khoản đang đăng nhập
 const users = ref([]);
 const roles = ref([]);
 const loading = ref(false); 
 const isEdit = ref(false);
 let userModal = null;
 
+// Trạng thái cho bộ lọc (Filters)
+const filters = reactive({
+    keyword: '',
+    role: '',       
+    status: ''      
+});
+
 const form = reactive({
     username: '', password: '', fullname: '', email: '', 
     phone: '', enabled: true, role: { id: null },
-    addresses: [] // Đổi từ String sang Mảng để chứa nhiều địa chỉ
+    addresses: [] 
 });
+
+// Biến kiểm tra xem user đang sửa có phải là chính người đang đăng nhập không
+const isCurrentUser = computed(() => form.username === authStore.user?.username);
 
 // --- METHODS ---
 
@@ -25,31 +37,35 @@ const fetchRoles = async () => {
 
 const fetchUsers = async () => {
     loading.value = true;
-    try { users.value = (await apiClient.get('/admin/users')).data; } 
+    try { 
+        const params = {};
+        if (filters.keyword.trim()) params.keyword = filters.keyword.trim();
+        if (filters.role) params.role = filters.role;
+        if (filters.status !== '') params.status = filters.status === 'true'; 
+
+        users.value = (await apiClient.get('/admin/users', { params })).data; 
+    } 
     catch (err) { Swal.fire('Lỗi', 'Không thể tải danh sách.', 'error'); } 
     finally { loading.value = false; }
 };
 
-/// [ĐÃ SỬA] Hàm trích xuất địa chỉ chống lỗi "undefined"
+const resetFilters = () => {
+    filters.keyword = '';
+    filters.role = '';
+    filters.status = '';
+    fetchUsers(); 
+};
+
 const getDefaultAddress = (addresses) => {
     if (!addresses || addresses.length === 0) return '-';
-    
-    // Tìm địa chỉ có isDefault = true, nếu không có thì lấy cái đầu tiên
     const target = addresses.find(a => a.isDefault === true) || addresses[0];
-    
-    // Gom các thành phần địa chỉ lại. 
-    // Dùng || để bắt dự phòng (nếu bạn dùng biến detail thay vì street ở backend)
     const parts = [
-        target.street || target.detail || target.specificAddress, 
+        target.street || target.detail || target.specificAddress || target.addressLine, 
         target.ward, 
         target.district, 
         target.city || target.province
     ];
-
-    // .filter(Boolean) sẽ tự động xóa sạch mọi chữ undefined, null, hoặc rỗng
-    // .join(', ') sẽ nối các chữ còn lại thành 1 chuỗi hoàn chỉnh
     const cleanAddress = parts.filter(Boolean).join(', ');
-
     return cleanAddress || '-';
 };
 
@@ -65,7 +81,6 @@ const openModal = (user = null) => {
             form.phone = d.phone;
             form.enabled = d.enabled;
             form.role = { id: d.role ? d.role.id : roles.value[0]?.id };
-            // Lưu toàn bộ mảng địa chỉ vào form
             form.addresses = d.addresses || []; 
             userModal.show();
         });
@@ -81,6 +96,12 @@ const openModal = (user = null) => {
 };
 
 const saveUser = async () => {
+    //  Chặn lưu nếu đang sửa chính mình và cố tình chọn khóa
+    if (isEdit.value && isCurrentUser.value && !form.enabled) {
+        Swal.fire('Cảnh báo', 'Bạn không thể tự khóa tài khoản của chính mình!', 'warning');
+        return;
+    }
+
     Swal.fire({
         title: 'Đang xử lý...',
         text: 'Hệ thống đang cập nhật và gửi email thông báo. Vui lòng chờ...',
@@ -92,7 +113,6 @@ const saveUser = async () => {
     loading.value = true;
 
     try {
-        // Tránh gửi mảng addresses ngược lại Backend nếu API không hỗ trợ update Sổ địa chỉ qua User
         const { addresses, ...payload } = form; 
         
         if (isEdit.value) {
@@ -129,6 +149,12 @@ const saveUser = async () => {
 };
 
 const deleteUser = async (username) => {
+    // THÊM: Chặn tự xóa chính mình
+    if (username === authStore.user?.username) {
+        Swal.fire('Từ chối', 'Bạn không thể tự xóa tài khoản đang đăng nhập!', 'error');
+        return;
+    }
+
     const r = await Swal.fire({
         title: 'Xác nhận xóa?', text: `Xóa user: ${username}?`, icon: 'warning',
         showCancelButton: true, confirmButtonText: 'Xóa ngay', cancelButtonText: 'Hủy'
@@ -162,9 +188,63 @@ onMounted(async () => {
         </button>
     </div>
 
+    <div class="card shadow-sm border-0 mb-4 bg-light">
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label small fw-bold text-muted mb-1">Tìm kiếm</label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-white border-end-0 text-muted"><i class="bi bi-search"></i></span>
+                        <input type="text" class="form-control border-start-0 ps-0" 
+                               v-model="filters.keyword" 
+                               placeholder="Tìm theo Tên, Email, Tài khoản..." 
+                               @keyup.enter="fetchUsers">
+                    </div>
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold text-muted mb-1">Vai trò (Phân quyền)</label>
+                    <select class="form-select" v-model="filters.role" @change="fetchUsers">
+                        <option value="">-- Tất cả vai trò --</option>
+                        <option v-for="r in roles" :key="r.id" :value="r.name">
+                            {{ r.name.replace('ROLE_', '') }}
+                        </option>
+                    </select>
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold text-muted mb-1">Trạng thái</label>
+                    <select class="form-select" v-model="filters.status" @change="fetchUsers">
+                        <option value="">-- Tất cả trạng thái --</option>
+                        <option value="true">Đang hoạt động</option>
+                        <option value="false">Đã bị khóa</option>
+                    </select>
+                </div>
+
+                <div class="col-md-2 d-flex gap-2">
+                    <button class="btn btn-primary flex-grow-1 fw-bold" @click="fetchUsers">
+                        Lọc
+                    </button>
+                    <button class="btn btn-outline-secondary" @click="resetFilters" title="Làm mới">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div v-if="loading && users.length === 0" class="text-center py-5">
         <div class="spinner-border text-primary"></div>
         <p class="mt-2 text-muted">Đang tải dữ liệu...</p>
+    </div>
+
+    <div v-else-if="!loading && users.length === 0" class="card shadow-sm border-0 text-center py-5">
+        <div class="card-body">
+            <i class="bi bi-people text-muted opacity-50" style="font-size: 3rem;"></i>
+            <h5 class="text-muted mt-3">Không tìm thấy người dùng nào!</h5>
+            <p class="text-muted small">Vui lòng thử lại với từ khóa hoặc bộ lọc khác.</p>
+            <button class="btn btn-link text-decoration-none" @click="resetFilters">Xóa bộ lọc</button>
+        </div>
     </div>
 
     <div v-else class="card shadow-sm border-0">
@@ -181,7 +261,10 @@ onMounted(async () => {
           </thead>
           <tbody>
             <tr v-for="u in users" :key="u.username">
-              <td class="ps-3 fw-bold">{{ u.username }}</td>
+              <td class="ps-3 fw-bold">
+                  {{ u.username }}
+                  <span v-if="u.username === authStore.user?.username" class="badge bg-primary ms-1" style="font-size: 0.6rem;">Bạn</span>
+              </td>
               <td>{{ u.fullname }}</td>
               <td>{{ u.email }}</td>
               <td>{{ u.phone || '-' }}</td>
@@ -247,13 +330,13 @@ onMounted(async () => {
                           </div>
                           <div class="col-md-6">
                             <label class="form-label fw-bold small">Vai trò <span class="text-danger">*</span></label>
-                            <select class="form-select border-primary" v-model="form.role.id" required>
+                            <select class="form-select border-primary" v-model="form.role.id" :disabled="isCurrentUser" required>
                               <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name.replace('ROLE_', '') }}</option>
                             </select>
                           </div>
                           <div class="col-md-6 d-flex align-items-end mb-1">
-                              <div class="form-check form-switch p-2 border rounded bg-light w-100">
-                                  <input class="form-check-input ms-1 me-2" type="checkbox" id="enabledSwitch" v-model="form.enabled">
+                              <div class="form-check form-switch p-2 border rounded bg-light w-100" :class="{'opacity-50': isCurrentUser}">
+                                  <input class="form-check-input ms-1 me-2" type="checkbox" id="enabledSwitch" v-model="form.enabled" :disabled="isCurrentUser">
                                   <label class="form-check-label fw-bold small" :class="form.enabled ? 'text-success' : 'text-danger'" for="enabledSwitch">
                                       {{ form.enabled ? 'Đang hoạt động' : 'Tài khoản bị khóa' }}
                                   </label>
@@ -281,10 +364,10 @@ onMounted(async () => {
                                       <div class="small text-muted mb-2"><i class="bi bi-telephone me-1"></i> {{ addr.phone || form.phone }}</div>
                                       
                                      <div class="small lh-sm mt-2 pt-2 border-top">
-    <strong v-if="addr.street || addr.detail">{{ addr.street || addr.detail }}</strong>
-    <br v-if="addr.street || addr.detail">
-    {{ [addr.ward, addr.district, addr.province || addr.city].filter(Boolean).join(', ') }}
-</div>
+                                        <strong v-if="addr.street || addr.detail || addr.addressLine">{{ addr.street || addr.detail || addr.addressLine }}</strong>
+                                        <br v-if="addr.street || addr.detail || addr.addressLine">
+                                        {{ [addr.ward, addr.district, addr.province || addr.city].filter(Boolean).join(', ') }}
+                                    </div>
                                   </div>
                               </div>
                           </div>
